@@ -6,18 +6,13 @@ use metal::MetalContext;
 use tensor::Tensor;
 
 fn main() {
-    let context =
-        MetalContext::new();
+    let context = MetalContext::new();
 
     println!(
         "GPU: {}",
         context.device.name()
     );
 
-    // A: 2 x 3
-    //
-    // [1 2 3]
-    // [4 5 6]
     let a = Tensor::from_slice(
         &context,
         &[
@@ -27,11 +22,6 @@ fn main() {
         &[2, 3],
     );
 
-    // B: 3 x 2
-    //
-    // [ 7  8]
-    // [ 9 10]
-    // [11 12]
     let b = Tensor::from_slice(
         &context,
         &[
@@ -42,39 +32,47 @@ fn main() {
         &[3, 2],
     );
 
-    let result =
-        a.matmul(
+    let naive_1 =
+        a.matmul_naive(
+            &context,
+            &b,
+        );
+
+    let naive_2 =
+        a.matmul_naive(
+            &context,
+            &b,
+        );
+
+    let tiled_1 =
+        a.matmul_tiled(
+            &context,
+            &b,
+        );
+
+    let tiled_2 =
+        a.matmul_tiled(
             &context,
             &b,
         );
 
     println!(
-        "A shape      = {:?}",
-        a.shape()
+        "Naive 1 = {:?}",
+        naive_1.as_slice()
     );
 
     println!(
-        "A            = {:?}",
-        a.as_slice()
+        "Naive 2 = {:?}",
+        naive_2.as_slice()
     );
 
     println!(
-        "B shape      = {:?}",
-        b.shape()
+        "Tiled 1 = {:?}",
+        tiled_1.as_slice()
     );
 
     println!(
-        "B            = {:?}",
-        b.as_slice()
-    );
-
-    println!(
-        "Result shape = {:?}",
-        result.shape()
-    );
-
-    println!(
-        "Result       = {:?}",
-        result.as_slice()
+        "Tiled 2 = {:?}",
+        tiled_2.as_slice()
     );
 }

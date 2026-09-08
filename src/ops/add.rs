@@ -24,7 +24,7 @@ pub fn vector_add(
     let shader_source =
         include_str!("../../kernels/vector_add.metal");
 
-    let pipeline = context.create_pipeline(
+    let pipeline = context.pipeline(
         shader_source,
         "vector_add",
     );
@@ -36,7 +36,7 @@ pub fn vector_add(
         command_buffer.new_compute_command_encoder();
 
     encoder.set_compute_pipeline_state(
-        &pipeline,
+        pipeline.as_ref(),
     );
 
     encoder.set_buffer(

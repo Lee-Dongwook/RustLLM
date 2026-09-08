@@ -2,7 +2,7 @@
 
 using namespace metal;
 
-kernel void matmul(
+kernel void matmul_naive(
     device const float* a [[buffer(0)]],
     device const float* b [[buffer(1)]],
     device float* result [[buffer(2)]],
@@ -16,18 +16,17 @@ kernel void matmul(
     uint col = gid.x;
     uint row = gid.y;
 
-    if(row >= m || col >= n) {
+    if (row >= m || col >= n) {
         return;
     }
 
     float sum = 0.0f;
 
     for (uint i = 0; i < k; ++i) {
-        float a_value = a[row * k + i];
-        float b_value = b[i * n + col];
-
-        sum += a_value * b_value;
+        sum +=
+            a[row * k + i] *
+            b[i * n + col];
     }
 
     result[row * n + col] = sum;
-}  
+}

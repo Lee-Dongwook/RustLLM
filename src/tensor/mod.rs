@@ -4,7 +4,8 @@ use crate::metal::{
 };
 
 use crate::ops::{
-    matrix_multiply,
+    matrix_multiply_naive,
+    matrix_multiply_tiled,
     vector_add,
 };
 pub struct Tensor {
@@ -80,47 +81,82 @@ impl Tensor {
         }
     }
 
-    pub fn matmul(
+    pub fn matmul_naive(
     &self,
     context: &MetalContext,
     rhs: &Tensor,
 ) -> Tensor {
-    assert_eq!(
-        self.shape.len(),
-        2,
-        "현재 matmul은 2차원 Tensor만 지원합니다."
-    );
+    let (m, k, n) =
+        self.matmul_dimensions(rhs);
 
-    assert_eq!(
-        rhs.shape.len(),
-        2,
-        "현재 matmul은 2차원 Tensor만 지원합니다."
-    );
-
-    let m = self.shape[0];
-    let k = self.shape[1];
-
-    let rhs_k = rhs.shape[0];
-    let n = rhs.shape[1];
-
-    assert_eq!(
-        k,
-        rhs_k,
-        "행렬 곱셈의 내부 차원이 일치하지 않습니다."
-    );
-
-    let result_buffer = matrix_multiply(
-        context,
-        &self.buffer,
-        &rhs.buffer,
-        m,
-        k,
-        n,
-    );
+    let result_buffer =
+        matrix_multiply_naive(
+            context,
+            &self.buffer,
+            &rhs.buffer,
+            m,
+            k,
+            n,
+        );
 
     Tensor {
         buffer: result_buffer,
         shape: vec![m, n],
     }
 }
+
+    pub fn matmul_tiled(
+        &self,
+        context: &MetalContext,
+        rhs: &Tensor,
+    ) -> Tensor {
+        let (m, k, n) =
+            self.matmul_dimensions(rhs);
+
+        let result_buffer =
+            matrix_multiply_tiled(
+                context,
+                &self.buffer,
+                &rhs.buffer,
+                m,
+                k,
+                n,
+            );
+
+        Tensor {
+            buffer: result_buffer,
+            shape: vec![m, n],
+        }
+    }
+
+    fn matmul_dimensions(
+        &self,
+        rhs: &Tensor,
+    ) -> (usize, usize, usize) {
+        assert_eq!(
+            self.shape.len(),
+            2,
+            "현재 matmul은 2차원 Tensor만 지원합니다."
+        );
+
+        assert_eq!(
+            rhs.shape.len(),
+            2,
+            "현재 matmul은 2차원 Tensor만 지원합니다."
+        );
+
+        let m = self.shape[0];
+        let k = self.shape[1];
+
+        let rhs_k = rhs.shape[0];
+        let n = rhs.shape[1];
+
+        assert_eq!(
+            k,
+            rhs_k,
+            "행렬 곱셈의 내부 차원이 일치하지 않습니다."
+        );
+
+        (m, k, n)
+    }
 }
