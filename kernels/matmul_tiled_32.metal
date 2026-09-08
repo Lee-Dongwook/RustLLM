@@ -2,9 +2,9 @@
 
 using namespace metal;
 
-#define TILE_SIZE 16
+#define TILE_SIZE 32
 
-kernel void matmul_tiled(
+kernel void matmul_tiled_32(
     device const float* a [[buffer(0)]],
     device const float* b [[buffer(1)]],
     device float* result [[buffer(2)]],
@@ -40,37 +40,30 @@ kernel void matmul_tiled(
         uint b_row =
             tile * TILE_SIZE + local_row;
 
-        // A의 현재 tile 로딩
         if (row < m && a_col < k) {
             tile_a[local_row][local_col] =
                 a[row * k + a_col];
         } else {
-            tile_a[local_row][local_col] =
-                0.0f;
+            tile_a[local_row][local_col] = 0.0f;
         }
 
-        // B의 현재 tile 로딩
         if (b_row < k && col < n) {
             tile_b[local_row][local_col] =
                 b[b_row * n + col];
         } else {
-            tile_b[local_row][local_col] =
-                0.0f;
+            tile_b[local_row][local_col] = 0.0f;
         }
 
-        // 256개 thread가 모두 tile을 채울 때까지 기다림
         threadgroup_barrier(
             mem_flags::mem_threadgroup
         );
 
-        // 빠른 threadgroup memory에서 계산
         for (uint i = 0; i < TILE_SIZE; ++i) {
             sum +=
                 tile_a[local_row][i] *
                 tile_b[i][local_col];
         }
 
-        // 모두 계산을 끝낸 뒤 다음 tile로 이동
         threadgroup_barrier(
             mem_flags::mem_threadgroup
         );

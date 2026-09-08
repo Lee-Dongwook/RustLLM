@@ -5,7 +5,9 @@ use crate::metal::{
 
 use crate::ops::{
     matrix_multiply_naive,
-    matrix_multiply_tiled,
+    matrix_multiply_tiled_8,
+    matrix_multiply_tiled_16,
+    matrix_multiply_tiled_32,
     vector_add,
 };
 pub struct Tensor {
@@ -105,29 +107,77 @@ impl Tensor {
     }
 }
 
-    pub fn matmul_tiled(
-        &self,
-        context: &MetalContext,
-        rhs: &Tensor,
-    ) -> Tensor {
-        let (m, k, n) =
-            self.matmul_dimensions(rhs);
+    pub fn matmul_tiled_8(
+    &self,
+    context: &MetalContext,
+    rhs: &Tensor,
+) -> Tensor {
+    let (m, k, n) =
+        self.matmul_dimensions(rhs);
 
-        let result_buffer =
-            matrix_multiply_tiled(
-                context,
-                &self.buffer,
-                &rhs.buffer,
-                m,
-                k,
-                n,
-            );
+    let buffer =
+        matrix_multiply_tiled_8(
+            context,
+            &self.buffer,
+            &rhs.buffer,
+            m,
+            k,
+            n,
+        );
 
-        Tensor {
-            buffer: result_buffer,
-            shape: vec![m, n],
-        }
+    Tensor {
+        buffer,
+        shape: vec![m, n],
     }
+}
+
+pub fn matmul_tiled_16(
+    &self,
+    context: &MetalContext,
+    rhs: &Tensor,
+) -> Tensor {
+    let (m, k, n) =
+        self.matmul_dimensions(rhs);
+
+    let buffer =
+        matrix_multiply_tiled_16(
+            context,
+            &self.buffer,
+            &rhs.buffer,
+            m,
+            k,
+            n,
+        );
+
+    Tensor {
+        buffer,
+        shape: vec![m, n],
+    }
+}
+
+pub fn matmul_tiled_32(
+    &self,
+    context: &MetalContext,
+    rhs: &Tensor,
+) -> Tensor {
+    let (m, k, n) =
+        self.matmul_dimensions(rhs);
+
+    let buffer =
+        matrix_multiply_tiled_32(
+            context,
+            &self.buffer,
+            &rhs.buffer,
+            m,
+            k,
+            n,
+        );
+
+    Tensor {
+        buffer,
+        shape: vec![m, n],
+    }
+}
 
     fn matmul_dimensions(
         &self,

@@ -85,41 +85,70 @@ pub fn matrix_multiply_naive(
     command_buffer.commit();
     command_buffer.wait_until_completed();
 
-    println!(
-        "[naive] command status = {:?}",
-        command_buffer.status()
-    );
-
     result
 }
 
-pub fn matrix_multiply_tiled(
+fn matrix_multiply_tiled_impl(
     context: &MetalContext,
     a: &MetalBuffer,
     b: &MetalBuffer,
     m: usize,
     k: usize,
     n: usize,
+    tile_size: u64,
+    shader_source: &str,
+    kernel_name: &str,
 ) -> MetalBuffer {
-    validate_inputs(a, b, m, k, n);
+    validate_inputs(
+        a,
+        b,
+        m,
+        k,
+        n,
+    );
 
     let result =
-        MetalBuffer::empty(context, m * n);
-
-    let shader_source =
-        include_str!("../../kernels/matmul_tiled.metal");
+        MetalBuffer::empty(
+            context,
+            m * n,
+        );
 
     let pipeline =
         context.pipeline(
             shader_source,
-            "matmul_tiled",
+            kernel_name,
         );
 
+    // 이 커널에서 Metal이 허용하는
+    // 최대 threadgroup thread 수
+    let max_threads =
+        pipeline
+            .max_total_threads_per_threadgroup();
+
+    let execution_width =
+        pipeline
+            .thread_execution_width();
+
+    let requested_threads =
+        tile_size * tile_size;
+
+    assert!(
+        requested_threads
+            <= max_threads as u64,
+        "Tile {}x{}는 이 Pipeline의 최대 thread 수({})를 초과합니다.",
+        tile_size,
+        tile_size,
+        max_threads,
+    );
+
     let command_buffer =
-        context.command_queue.new_command_buffer();
+        context
+            .command_queue
+            .new_command_buffer();
 
     let encoder =
-        command_buffer.new_compute_command_encoder();
+        command_buffer
+            .new_compute_command_encoder();
 
     encoder.set_compute_pipeline_state(
         pipeline.as_ref(),
@@ -135,29 +164,20 @@ pub fn matrix_multiply_tiled(
         n,
     );
 
-    // --------------------------------
-    // Tiled dispatch
-    //
-    // 반드시 16 x 16 thread가
-    // 전부 존재해야 한다.
-    // --------------------------------
-
-    const TILE_SIZE: u64 = 16;
-
-    let thread_group_size =
+    let threads_per_group =
         MTLSize::new(
-            TILE_SIZE,
-            TILE_SIZE,
+            tile_size,
+            tile_size,
             1,
         );
 
     let groups_x =
-        (n as u64 + TILE_SIZE - 1)
-            / TILE_SIZE;
+        (n as u64 + tile_size - 1)
+            / tile_size;
 
     let groups_y =
-        (m as u64 + TILE_SIZE - 1)
-            / TILE_SIZE;
+        (m as u64 + tile_size - 1)
+            / tile_size;
 
     let thread_groups =
         MTLSize::new(
@@ -166,30 +186,92 @@ pub fn matrix_multiply_tiled(
             1,
         );
 
-    println!(
-        "[tiled] groups = {} x {}, threads/group = {} x {}",
-        groups_x,
-        groups_y,
-        TILE_SIZE,
-        TILE_SIZE,
-    );
-
     encoder.dispatch_thread_groups(
         thread_groups,
-        thread_group_size,
+        threads_per_group,
     );
 
     encoder.end_encoding();
 
     command_buffer.commit();
-    command_buffer.wait_until_completed();
+
+    command_buffer
+        .wait_until_completed();
+
+    // 지금은 capability 값이 실제로 어떻게 나오는지
+    // 최초 실험에서 보기 위해 남겨둔다.
+    let _ = execution_width;
 
     println!(
-        "[tiled] command status = {:?}",
-        command_buffer.status()
-    );
-
+    "[{}] execution width = {}, max threads/group = {}",
+    kernel_name,
+    execution_width,
+    max_threads,
+);
     result
+}
+
+pub fn matrix_multiply_tiled_8(
+    context: &MetalContext,
+    a: &MetalBuffer,
+    b: &MetalBuffer,
+    m: usize,
+    k: usize,
+    n: usize,
+) -> MetalBuffer {
+    matrix_multiply_tiled_impl(
+        context,
+        a,
+        b,
+        m,
+        k,
+        n,
+        8,
+        include_str!("../../kernels/matmul_tiled_8.metal"),
+        "matmul_tiled_8",
+    )
+}
+
+pub fn matrix_multiply_tiled_16(
+    context: &MetalContext,
+    a: &MetalBuffer,
+    b: &MetalBuffer,
+    m: usize,
+    k: usize,
+    n: usize,
+) -> MetalBuffer {
+    matrix_multiply_tiled_impl(
+        context,
+        a,
+        b,
+        m,
+        k,
+        n,
+        16,
+        include_str!("../../kernels/matmul_tiled_16.metal"),
+        "matmul_tiled_16",
+    )
+}
+
+pub fn matrix_multiply_tiled_32(
+    context: &MetalContext,
+    a: &MetalBuffer,
+    b: &MetalBuffer,
+    m: usize,
+    k: usize,
+    n: usize,
+) -> MetalBuffer {
+    matrix_multiply_tiled_impl(
+        context,
+        a,
+        b,
+        m,
+        k,
+        n,
+        32,
+        include_str!("../../kernels/matmul_tiled_32.metal"),
+        "matmul_tiled_32",
+    )
 }
 
 fn validate_inputs(
