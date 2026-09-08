@@ -6,39 +6,49 @@ use metal::MetalContext;
 use tensor::Tensor;
 
 fn main() {
-    let context = MetalContext::new();
+    let context =
+        MetalContext::new();
 
-    println!("GPU: {}", context.device.name());
+    println!(
+        "GPU: {}",
+        context.device.name()
+    );
 
+    // A: 2 x 3
+    //
+    // [1 2 3]
+    // [4 5 6]
     let a = Tensor::from_slice(
         &context,
         &[
-            1.0,
-            2.0,
-            3.0,
-            4.0,
+            1.0, 2.0, 3.0,
+            4.0, 5.0, 6.0,
         ],
-        &[2, 2],
+        &[2, 3],
     );
 
+    // B: 3 x 2
+    //
+    // [ 7  8]
+    // [ 9 10]
+    // [11 12]
     let b = Tensor::from_slice(
         &context,
         &[
-            10.0,
-            20.0,
-            30.0,
-            40.0,
+            7.0, 8.0,
+            9.0, 10.0,
+            11.0, 12.0,
         ],
-        &[2, 2],
+        &[3, 2],
     );
 
     let result =
-        a.add(
+        a.matmul(
             &context,
             &b,
         );
 
-     println!(
+    println!(
         "A shape      = {:?}",
         a.shape()
     );

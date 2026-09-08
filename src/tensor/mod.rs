@@ -3,8 +3,10 @@ use crate::metal::{
     MetalContext,
 };
 
-use crate::ops::vector_add;
-
+use crate::ops::{
+    matrix_multiply,
+    vector_add,
+};
 pub struct Tensor {
     buffer: MetalBuffer,
     shape: Vec<usize>,
@@ -77,4 +79,48 @@ impl Tensor {
             shape: self.shape.clone(),
         }
     }
+
+    pub fn matmul(
+    &self,
+    context: &MetalContext,
+    rhs: &Tensor,
+) -> Tensor {
+    assert_eq!(
+        self.shape.len(),
+        2,
+        "현재 matmul은 2차원 Tensor만 지원합니다."
+    );
+
+    assert_eq!(
+        rhs.shape.len(),
+        2,
+        "현재 matmul은 2차원 Tensor만 지원합니다."
+    );
+
+    let m = self.shape[0];
+    let k = self.shape[1];
+
+    let rhs_k = rhs.shape[0];
+    let n = rhs.shape[1];
+
+    assert_eq!(
+        k,
+        rhs_k,
+        "행렬 곱셈의 내부 차원이 일치하지 않습니다."
+    );
+
+    let result_buffer = matrix_multiply(
+        context,
+        &self.buffer,
+        &rhs.buffer,
+        m,
+        k,
+        n,
+    );
+
+    Tensor {
+        buffer: result_buffer,
+        shape: vec![m, n],
+    }
+}
 }
