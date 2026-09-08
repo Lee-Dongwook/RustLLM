@@ -1,0 +1,21 @@
+# Rust build output
+/target/
+
+# macOS
+.DS_Store
+
+# VS Code local settings
+.vscode/
+
+# Build artifacts for Metal shaders
+/build/
+*.air
+*.metallib
+
+# Temporary files
+*.tmp
+*.log
+
+# Environment files
+.env
+.env.*
