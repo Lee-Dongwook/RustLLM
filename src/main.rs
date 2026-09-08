@@ -1,18 +1,19 @@
 use std::ffi::c_void;
 use std::mem;
 
-use metal:: {
-    CompileOptions,
-    Device,
+use ::metal::{
     MTLResourceOptions,
     MTLSize,
 };
 
-fn main() {
-    let device = Device::system_default()
-        .expect("Metal GPU를 찾을 수 없습니다.");
+mod metal;
 
-    println!("GPU: {}", device.name());
+use metal::MetalContext;
+
+fn main() {
+    let context = MetalContext::new();
+
+    println!("GPU: {}", context.device.name());
 
     let a: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0];
     let b: Vec<f32> = vec![10.0, 20.0, 30.0, 40.0];
@@ -23,42 +24,28 @@ fn main() {
 
     let buffer_size = (count * mem::size_of::<f32>()) as u64;
 
-    let buffer_a = device.new_buffer_with_data(
+    let buffer_a = context.device.new_buffer_with_data(
         a.as_ptr() as *const c_void, 
         buffer_size, 
         MTLResourceOptions::StorageModeShared
     );
 
-    let buffer_b = device.new_buffer_with_data(
+    let buffer_b = context.device.new_buffer_with_data(
         b.as_ptr() as *const c_void, 
         buffer_size, 
         MTLResourceOptions::StorageModeShared
     );
 
-    let buffer_result = device.new_buffer(
+    let buffer_result = context.device.new_buffer(
         buffer_size,
         MTLResourceOptions::StorageModeShared
     );
 
     let shader_source = include_str!("../kernels/vector_add.metal");
 
-    let compile_options = CompileOptions::new();
+    let pipeline = context.create_pipeline(shader_source, "vector_add");
 
-    let library = device
-        .new_library_with_source(shader_source, &compile_options)
-        .expect("Metal shader 컴파일에 실패했습니다.");
-
-    let function = library
-        .get_function("vector_add", None)
-        .expect("vector_add kernel을 찾을 수 없습니다.");
-
-    let pipeline = device
-        .new_compute_pipeline_state_with_function(&function)
-        .expect("Compute pipeline 생성에 실패했습니다.");
-
-    let command_queue = device.new_command_queue();
-
-    let command_buffer = command_queue.new_command_buffer();
+    let command_buffer = context.command_queue.new_command_buffer();
 
     let encoder = command_buffer.new_compute_command_encoder();
 
