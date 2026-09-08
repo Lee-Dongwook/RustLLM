@@ -2,20 +2,48 @@ mod benchmark;
 mod metal;
 mod ops;
 mod tensor;
+mod error;
 
 use benchmark::run_matmul_benchmarks;
 use metal::MetalContext;
 
-fn main() {
-    let context =
-        MetalContext::new();
+use tensor::{
+    DType,
+    Shape,
+};
+
+fn main() -> error::Result<()> {
+    let shape =
+        Shape::new(&[
+            2,
+            3,
+            4,
+        ])?;
 
     println!(
-        "GPU: {}",
-        context.device.name()
+        "shape = {:?}",
+        shape.dims(),
     );
 
-    run_matmul_benchmarks(
-        &context,
+    println!(
+        "rank = {}",
+        shape.rank(),
     );
+
+    println!(
+        "numel = {}",
+        shape.numel(),
+    );
+
+    println!(
+        "dtype = {:?}",
+        DType::F32,
+    );
+
+    println!(
+        "bytes per element = {}",
+        DType::F32.size_in_bytes(),
+    );
+
+    Ok(())
 }

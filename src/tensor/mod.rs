@@ -1,3 +1,9 @@
+mod dtype;
+mod shape;
+
+pub use dtype::DType;
+pub use shape::Shape;
+
 use crate::metal::{
     MetalBuffer,
     MetalContext,
