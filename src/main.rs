@@ -1,48 +1,61 @@
-mod benchmark;
+mod error;
 mod metal;
 mod ops;
 mod tensor;
-mod error;
 
-use benchmark::run_matmul_benchmarks;
+use error::Result;
 use metal::MetalContext;
+use tensor::Tensor;
 
-use tensor::{
-    DType,
-    Shape,
-};
+fn main() -> Result<()> {
+    let context =
+        MetalContext::new();
 
-fn main() -> error::Result<()> {
-    let shape =
-        Shape::new(&[
-            2,
-            3,
-            4,
-        ])?;
+    let tensor =
+        Tensor::from_f32_slice(
+            &context,
+            &[
+                1.0,
+                2.0,
+                3.0,
+                4.0,
+            ],
+            &[2, 2],
+        )?;
 
     println!(
-        "shape = {:?}",
-        shape.dims(),
+        "GPU    = {}",
+        context.device.name(),
     );
 
     println!(
-        "rank = {}",
-        shape.rank(),
+        "shape  = {:?}",
+        tensor.shape().dims(),
     );
 
     println!(
-        "numel = {}",
-        shape.numel(),
+        "rank   = {}",
+        tensor.shape().rank(),
     );
 
     println!(
-        "dtype = {:?}",
-        DType::F32,
+        "numel  = {}",
+        tensor.shape().numel(),
     );
 
     println!(
-        "bytes per element = {}",
-        DType::F32.size_in_bytes(),
+        "dtype  = {:?}",
+        tensor.dtype(),
+    );
+
+    println!(
+        "device = {:?}",
+        tensor.device(),
+    );
+
+    println!(
+        "data   = {:?}",
+        tensor.as_f32_slice()?,
     );
 
     Ok(())
