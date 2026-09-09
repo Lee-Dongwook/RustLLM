@@ -6,85 +6,25 @@ mod tensor;
 
 use error::Result;
 use metal::MetalContext;
-
-use nn::{
-    Linear,
-    Mlp,
-};
-
 use tensor::Tensor;
 
 fn main() -> Result<()> {
     let context =
         MetalContext::new();
 
-    // input:
-    //
-    // [1, 2]
-    //
-    // shape = [1, 2]
     let x =
         Tensor::from_f32_slice(
             &context,
-            &[1.0, 2.0],
-            &[1, 2],
-        )?;
-
-    // gate projection
-    // [2, 4]
-    let gate_weight =
-        Tensor::from_f32_slice(
-            &context,
             &[
-                1.0, 0.0, 1.0, 0.0,
-                0.0, 1.0, 0.0, 1.0,
+                1.0, 2.0, 3.0,
+                0.0, 0.0, 0.0,
             ],
-            &[2, 4],
-        )?;
-
-    // up projection
-    // [2, 4]
-    let up_weight =
-        Tensor::from_f32_slice(
-            &context,
-            &[
-                1.0, 1.0, 1.0, 1.0,
-                1.0, 1.0, 1.0, 1.0,
-            ],
-            &[2, 4],
-        )?;
-
-    // down projection
-    // [4, 2]
-    let down_weight =
-        Tensor::from_f32_slice(
-            &context,
-            &[
-                1.0, 0.0,
-                0.0, 1.0,
-                1.0, 0.0,
-                0.0, 1.0,
-            ],
-            &[4, 2],
-        )?;
-
-    let mlp =
-        Mlp::new(
-            Linear::new(
-                gate_weight,
-            )?,
-            Linear::new(
-                up_weight,
-            )?,
-            Linear::new(
-                down_weight,
-            )?,
+            &[2, 3],
         )?;
 
     let y =
-        mlp.forward(
+        x.softmax_last_dim(
             &context,
-            &x,
         )?;
 
     println!(
@@ -100,6 +40,29 @@ fn main() -> Result<()> {
     println!(
         "output       = {:?}",
         y.as_f32_slice()?,
+    );
+
+    let output =
+        y.as_f32_slice()?;
+
+    let row0_sum: f32 =
+        output[0..3]
+            .iter()
+            .sum();
+
+    let row1_sum: f32 =
+        output[3..6]
+            .iter()
+            .sum();
+
+    println!(
+        "row 0 sum    = {}",
+        row0_sum,
+    );
+
+    println!(
+        "row 1 sum    = {}",
+        row1_sum,
     );
 
     Ok(())

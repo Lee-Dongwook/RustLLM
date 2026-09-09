@@ -4,6 +4,7 @@ use crate::ops::{
     materialize_contiguous_f32,
     silu_f32,
     mul_f32,
+    softmax_f32,
 };
 
 use crate::error::{
@@ -643,4 +644,63 @@ impl Tensor {
               DType::F32,
         })
     }
+
+    pub fn softmax_last_dim(
+        &self,
+        context: &MetalContext,
+    ) -> Result<Self> {
+    if self.dtype
+        != DType::F32
+    {
+        return Err(
+            TinyError::UnsupportedDType(
+                format!(
+                    "{:?}",
+                    self.dtype,
+                ),
+            ),
+        );
+    }
+
+    if self.rank() == 0 {
+        return Err(
+            TinyError::InvalidDimension(
+                "Softmax requires at least one dimension"
+                    .to_string(),
+            ),
+        );
+    }
+
+    let input =
+        if self.is_contiguous() {
+            self.clone()
+        } else {
+            self.contiguous(
+                context,
+            )?
+        };
+
+    let width =
+        input.dim(
+            input.rank() - 1,
+        )?;
+
+    let rows =
+        input.numel()
+        / width;
+
+    let buffer =
+        softmax_f32(
+            context,
+            input.metal_buffer()?,
+            rows,
+            width,
+        )?;
+
+    Self::from_metal_buffer(
+        buffer,
+        input.shape().dims(),
+        DType::F32,
+    )
+  }
 }
