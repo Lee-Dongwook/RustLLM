@@ -1,6 +1,6 @@
 use crate::ops::{
-    attention_scale_mask_f32, batched_matmul_f32, materialize_contiguous_f32, matmul_f32,
-    softmax_f32,
+    attention_scale_mask_f32, batched_matmul_f32, materialize_contiguous_f32, matmul_f16,
+    matmul_f32, softmax_f32,
 };
 use std::sync::Arc;
 
@@ -338,12 +338,11 @@ impl Tensor {
     }
 
     pub fn matmul(&self, context: &MetalContext, rhs: &Tensor) -> Result<Self> {
-        if self.dtype != DType::F32 {
-            return Err(TinyError::UnsupportedDType(format!("{:?}", self.dtype,)));
-        }
-
-        if rhs.dtype != DType::F32 {
-            return Err(TinyError::UnsupportedDType(format!("{:?}", rhs.dtype,)));
+        if self.dtype != rhs.dtype {
+            return Err(TinyError::UnsupportedDType(format!(
+                "mixed matmul dtypes: {:?} and {:?}",
+                self.dtype, rhs.dtype
+            )));
         }
 
         if self.rank() != 2 {
@@ -385,7 +384,15 @@ impl Tensor {
             rhs.contiguous(context)?
         };
 
-        let buffer = matmul_f32(context, lhs.metal_buffer()?, rhs.metal_buffer()?, m, k, n)?;
+        if self.dtype == DType::F16 && (!lhs.is_contiguous() || !rhs.is_contiguous()) {
+            return Err(TinyError::NonContiguousTensor(
+                "F16 matmul currently requires contiguous inputs".into(),
+            ));
+        }
+        let buffer = match self.dtype {
+            DType::F32 => matmul_f32(context, lhs.metal_buffer()?, rhs.metal_buffer()?, m, k, n)?,
+            DType::F16 => matmul_f16(context, lhs.metal_buffer()?, rhs.metal_buffer()?, m, k, n)?,
+        };
 
         let shape = Shape::new(&[m, n])?;
 
@@ -395,7 +402,7 @@ impl Tensor {
             storage: Arc::new(Storage::Metal(buffer)),
             shape,
             strides,
-            dtype: DType::F32,
+            dtype: self.dtype,
         })
     }
 

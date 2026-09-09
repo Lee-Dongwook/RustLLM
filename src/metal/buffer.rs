@@ -88,6 +88,21 @@ impl MetalBuffer {
         }
     }
 
+    pub fn empty_with_element_size(
+        context: &MetalContext,
+        len: usize,
+        element_size: usize,
+    ) -> Self {
+        assert!(len > 0 && element_size > 0, "invalid MetalBuffer size");
+        let byte_len = len
+            .checked_mul(element_size)
+            .expect("MetalBuffer byte size overflow");
+        let raw = context
+            .device
+            .new_buffer(byte_len as u64, MTLResourceOptions::StorageModeShared);
+        Self { raw, len, byte_len }
+    }
+
     pub fn len(&self) -> usize {
         self.len
     }
