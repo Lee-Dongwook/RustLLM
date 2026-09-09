@@ -6,71 +6,100 @@ mod tensor;
 
 use error::Result;
 use metal::MetalContext;
-use nn::RmsNorm;
+
+use nn::{
+    Linear,
+    Mlp,
+};
+
 use tensor::Tensor;
 
 fn main() -> Result<()> {
     let context =
         MetalContext::new();
 
-    let input =
+    // input:
+    //
+    // [1, 2]
+    //
+    // shape = [1, 2]
+    let x =
+        Tensor::from_f32_slice(
+            &context,
+            &[1.0, 2.0],
+            &[1, 2],
+        )?;
+
+    // gate projection
+    // [2, 4]
+    let gate_weight =
         Tensor::from_f32_slice(
             &context,
             &[
-                1.0, 1.0, 1.0, 1.0,
-
-                2.0, 2.0, 2.0, 2.0,
+                1.0, 0.0, 1.0, 0.0,
+                0.0, 1.0, 0.0, 1.0,
             ],
             &[2, 4],
         )?;
 
-    let weight =
+    // up projection
+    // [2, 4]
+    let up_weight =
         Tensor::from_f32_slice(
             &context,
             &[
-                1.0,
-                1.0,
-                1.0,
-                1.0,
+                1.0, 1.0, 1.0, 1.0,
+                1.0, 1.0, 1.0, 1.0,
             ],
-            &[4],
+            &[2, 4],
         )?;
 
-    let norm =
-        RmsNorm::new(
-            weight,
-            1e-5,
-        )?;
-
-    let output =
-        norm.forward(
+    // down projection
+    // [4, 2]
+    let down_weight =
+        Tensor::from_f32_slice(
             &context,
-            &input,
+            &[
+                1.0, 0.0,
+                0.0, 1.0,
+                1.0, 0.0,
+                0.0, 1.0,
+            ],
+            &[4, 2],
+        )?;
+
+    let mlp =
+        Mlp::new(
+            Linear::new(
+                gate_weight,
+            )?,
+            Linear::new(
+                up_weight,
+            )?,
+            Linear::new(
+                down_weight,
+            )?,
+        )?;
+
+    let y =
+        mlp.forward(
+            &context,
+            &x,
         )?;
 
     println!(
         "input shape  = {:?}",
-        input.shape().dims(),
-    );
-
-    println!(
-        "hidden size  = {}",
-        norm.hidden_size(),
-    );
-
-    println!(
-        "epsilon      = {}",
-        norm.epsilon(),
+        x.shape().dims(),
     );
 
     println!(
         "output shape = {:?}",
-        output.shape().dims(),
+        y.shape().dims(),
     );
 
     println!(
         "output       = {:?}",
-        output.as_f32_slice()?,
+        y.as_f32_slice()?,
     );
 
     Ok(())

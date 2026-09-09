@@ -2,6 +2,8 @@ use std::sync::Arc;
 use crate::ops::{
     matmul_f32,
     materialize_contiguous_f32,
+    silu_f32,
+    mul_f32,
 };
 
 use crate::error::{
@@ -115,6 +117,104 @@ impl Tensor {
             dtype:
                 self.dtype,
         })
+    }
+
+    pub fn silu(
+        &self,
+        context: &MetalContext,
+    ) -> Result<Self> {
+        if self.dtype != DType::F32 {
+            return Err(
+                TinyError::UnsupportedDType(
+                    format!("{:?}", self.dtype),
+                ),
+            );
+        }
+
+        let input =
+            if self.is_contiguous() {
+                self.clone()
+            } else {
+                self.contiguous(
+                    context,
+                )?
+            };
+
+        let buffer =
+            silu_f32(
+                context,
+                input.metal_buffer()?,
+            )?;
+
+        Self::from_metal_buffer(
+            buffer,
+            self.shape.dims(),
+            DType::F32,
+        )
+    }
+    
+    pub fn mul(
+        &self,
+        context: &MetalContext,
+        rhs: &Tensor,
+    ) -> Result<Self> {
+        if self.dtype != DType::F32
+            || rhs.dtype != DType::F32
+        {
+        return Err(
+            TinyError::UnsupportedDType(
+                "mul currently supports only F32"
+                    .to_string(),
+                ),
+            );
+        }
+
+        if self.shape != rhs.shape {
+            return Err(
+                TinyError::ShapeMismatch {
+                    left:
+                        self.shape
+                            .dims()
+                            .to_vec(),
+
+                    right:
+                        rhs.shape
+                            .dims()
+                            .to_vec(),
+                },
+            );
+        }
+
+        let lhs =
+            if self.is_contiguous() {
+                self.clone()
+            } else {
+                self.contiguous(
+                    context,
+                )?
+            };
+
+        let rhs =
+            if rhs.is_contiguous() {
+                rhs.clone()
+            } else {
+                rhs.contiguous(
+                    context,
+                )?
+            };
+
+        let buffer =
+            mul_f32(
+                context,
+                lhs.metal_buffer()?,
+                rhs.metal_buffer()?,
+            )?;
+
+        Self::from_metal_buffer(
+            buffer,
+            self.shape.dims(),
+            DType::F32,
+        )
     }
 
     pub fn transpose(
