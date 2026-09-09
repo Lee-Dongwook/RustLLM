@@ -1,5 +1,8 @@
 use std::sync::Arc;
-use crate::ops::materialize_contiguous_f32;
+use crate::ops::{
+    matmul_f32,
+    materialize_contiguous_f32,
+};
 
 use crate::error::{
     Result,
@@ -385,5 +388,121 @@ impl Tensor {
     ) -> Result<&MetalBuffer> {
         self.storage
             .metal_buffer()
+    }
+
+    pub fn matmul(
+        &self,
+        context: &MetalContext,
+        rhs: &Tensor,
+    ) -> Result<Self> {
+        if self.dtype != DType::F32 {
+            return Err(
+            TinyError::UnsupportedDType(
+                format!(
+                    "{:?}",
+                    self.dtype,
+                ),
+            ),
+          );
+        }
+
+        if rhs.dtype != DType::F32 {
+           return Err(
+            TinyError::UnsupportedDType(
+                format!(
+                    "{:?}",
+                    rhs.dtype,
+                ),
+            ),
+          );
+        }
+
+        if self.rank() != 2 {
+          return Err(
+            TinyError::InvalidDimension(
+                format!(
+                    "matmul currently requires rank-2 tensors, left rank is {}",
+                    self.rank(),
+                ),
+            ),
+          );
+        }
+
+        if rhs.rank() != 2 {
+          return Err(
+            TinyError::InvalidDimension(
+                format!(
+                    "matmul currently requires rank-2 tensors, right rank is {}",
+                    rhs.rank(),
+                ),
+            ),
+          );
+       }
+
+       let m = self.dim(0)?;
+       let k = self.dim(1)?;
+       let rhs_k = rhs.dim(0)?;
+       let n = rhs.dim(1)?;
+
+       if k != rhs_k {
+          return Err(
+            TinyError::ShapeMismatch {
+                left:
+                    self.shape
+                        .dims()
+                        .to_vec(),
+
+                right:
+                    rhs.shape
+                        .dims()
+                        .to_vec(),
+             },
+          );
+       }
+
+       let lhs = 
+            if self.is_contiguous() {
+                self.clone()
+            } else {
+                self.contiguous(context,)?
+            };
+        
+        let rhs = 
+            if rhs.is_contiguous() {
+                rhs.clone()
+            } else {
+                rhs.contiguous(context,)?
+            };
+        
+        let buffer = matmul_f32(
+            context, 
+            lhs.metal_buffer()?, 
+            rhs.metal_buffer()?, 
+            m, 
+            k, 
+            n
+        )?;
+
+        let shape =  
+            Shape::new(
+                &[m, n],
+            )?;
+        
+        let strides = 
+            Strides::contiguous(&shape,);
+
+        
+        Ok(Self {
+            storage: 
+                Arc::new(
+                    Storage::Metal(
+                        buffer,
+                    ),
+                ),
+            shape,
+            strides,
+            dtype:
+              DType::F32,
+        })
     }
 }

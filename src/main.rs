@@ -11,92 +11,41 @@ fn main() -> Result<()> {
     let context =
         MetalContext::new();
 
-    let data: Vec<f32> =
-        (1..=24)
-            .map(|value| {
-                value as f32
-            })
-            .collect();
-
-    let x =
+    let a =
         Tensor::from_f32_slice(
             &context,
-            &data,
-            &[2, 3, 4],
+            &[
+                1.0, 2.0, 3.0,
+                4.0, 5.0, 6.0,
+            ],
+            &[2, 3],
         )?;
 
-    println!(
-        "--- Original ---"
-    );
-
-    println!(
-        "shape      = {:?}",
-        x.shape().dims(),
-    );
-
-    println!(
-        "strides    = {:?}",
-        x.strides().values(),
-    );
-
-    println!(
-        "contiguous = {}",
-        x.is_contiguous(),
-    );
-
-    let y =
-        x.permute(
-            &[1, 0, 2],
-        )?;
-
-    println!();
-    println!(
-        "--- Permuted ---"
-    );
-
-    println!(
-        "shape      = {:?}",
-        y.shape().dims(),
-    );
-
-    println!(
-        "strides    = {:?}",
-        y.strides().values(),
-    );
-
-    println!(
-        "contiguous = {}",
-        y.is_contiguous(),
-    );
-
-    let y =
-        y.contiguous(
+    let b =
+        Tensor::from_f32_slice(
             &context,
+            &[
+                7.0, 8.0,
+                9.0, 10.0,
+                11.0, 12.0,
+            ],
+            &[3, 2],
         )?;
 
-    println!();
+    let c =
+        a.matmul(
+            &context,
+            &b,
+        )?;
+
     println!(
-        "--- Materialized ---"
+        "shape = {:?}",
+        c.shape().dims(),
     );
 
     println!(
-        "shape      = {:?}",
-        y.shape().dims(),
-    );
-
-    println!(
-        "strides    = {:?}",
-        y.strides().values(),
-    );
-
-    println!(
-        "contiguous = {}",
-        y.is_contiguous(),
-    );
-
-    println!(
-        "data       = {:?}",
-        y.as_f32_slice()?,
+        "data  = {:?}",
+        c.as_f32_slice()?,
     );
 
     Ok(())
