@@ -5,6 +5,7 @@ use crate::error::{
 
 use crate::metal::MetalContext;
 use crate::tensor::Tensor;
+use crate::model::LayerKvCache;
 
 use super::{
     Linear,
@@ -161,270 +162,156 @@ impl SelfAttention {
         context: &MetalContext,
         input: &Tensor,
     ) -> Result<Tensor> {
-        // 현재 v0.1 Attention은
-        //
-        // [sequence, hidden]
-        //
-        // 형태를 받는다.
-        if input.rank() != 2 {
-            return Err(
-                TinyError::InvalidDimension(
-                    format!(
-                        "SelfAttention currently expects [sequence, hidden], got shape {:?}",
-                        input.shape().dims(),
-                    ),
+        let mut cache = LayerKvCache::new();
+        self.forward_with_cache(context, input, &mut cache)
+    }
+
+    pub fn forward_with_cache(
+        &self,
+        context: &MetalContext,
+        x: &Tensor,
+        cache: &mut LayerKvCache,
+    ) -> Result<Tensor> {
+        if x.rank() != 2 {
+        return Err(
+            TinyError::ModelFormat(
+                format!(
+                    "attention expects [sequence, hidden], got {:?}",
+                    x.shape().dims(),
                 ),
-            );
+            ),
+          );
         }
 
-        let seq_len =
-            input.dim(0)?;
+        let seq_len = x.dim(0)?;
+        let hidden_size = x.dim(1)?;
 
-        let hidden_size =
-            input.dim(1)?;
-
-        if hidden_size
-            != self.hidden_size
-        {
+        if hidden_size != self.hidden_size {
             return Err(
                 TinyError::InvalidShape(
                     format!(
-                        "attention expected hidden size {}, got {}",
+                        "attention expected hidden size {}, got {hidden_size}",
                         self.hidden_size,
-                        hidden_size,
                     ),
                 ),
             );
         }
 
-        // -----------------------------------------------
-        // 1. Q / K / V projection
-        // -----------------------------------------------
+        let start_pos = cache.len();
 
-        let q =
-            self.q_proj.forward(
-                context,
-                input,
-            )?;
+        let q = self.q_proj.forward(context, x)?;
+        let k = self.k_proj.forward(context, x)?;
+        let v = self.v_proj.forward(context, x)?;
 
-        let k =
-            self.k_proj.forward(
-                context,
-                input,
-            )?;
+    // --------------------------------------------
+    // [S, hidden]
+    //
+    // ↓
+    //
+    // [1, S, H, D]
+    //
+    // ↓ permute
+    //
+    // [1, H, S, D]
+    // --------------------------------------------
 
-        let v =
-            self.v_proj.forward(
-                context,
-                input,
-            )?;
+        let q = q.reshape(&[1,seq_len,self.num_heads,self.head_dim,])?.permute(&[0, 2, 1, 3],)?;
+        let k = k.reshape(&[1, seq_len, self.num_heads, self.head_dim])?.permute(&[0,2,1,3])?;
+        let v = v.reshape(&[1, seq_len, self.num_heads, self.head_dim])?.permute(&[0,2,1,3])?;
 
-        // 현재:
-        //
-        // [sequence, hidden]
-        //
-        // ↓
-        //
-        // [1, sequence, heads, head_dim]
+    // --------------------------------------------
+    // RoPE
+    //
+    // 여기 start_pos가 핵심
+    // --------------------------------------------
 
-        let q =
-            q.reshape(
-                &[
-                    1,
-                    seq_len,
-                    self.num_heads,
-                    self.head_dim,
-                ],
-            )?;
+    let q =
+        self.rope.forward(
+            context,
+            &q,
+            start_pos,
+        )?;
 
-        let k =
-            k.reshape(
-                &[
-                    1,
-                    seq_len,
-                    self.num_heads,
-                    self.head_dim,
-                ],
-            )?;
+    let k =
+        self.rope.forward(
+            context,
+            &k,
+            start_pos,
+        )?;
 
-        let v =
-            v.reshape(
-                &[
-                    1,
-                    seq_len,
-                    self.num_heads,
-                    self.head_dim,
-                ],
-            )?;
+    cache.append(
+        context,
+        k,
+        v,
+    )?;
 
-        // -----------------------------------------------
-        // 2. Head를 앞으로 이동
-        //
-        // [B,S,H,D]
-        //
-        // →
-        //
-        // [B,H,S,D]
-        // -----------------------------------------------
+    let all_k =
+        cache.key()?;
 
-        let q =
-            q.permute(
-                &[0, 2, 1, 3],
-            )?;
+    let all_v =
+        cache.value()?;
 
-        let k =
-            k.permute(
-                &[0, 2, 1, 3],
-            )?;
+    let k_transposed =
+        all_k.transpose(
+            2,
+            3,
+        )?;
 
-        let v =
-            v.permute(
-                &[0, 2, 1, 3],
-            )?;
+    let scores =
+        q.batched_matmul(
+            context,
+            &k_transposed,
+        )?;
 
-        // -----------------------------------------------
-        // 3. RoPE
-        // -----------------------------------------------
+    let scale =
+        1.0f32
+            / (
+                self.head_dim
+                    as f32
+            )
+            .sqrt();
 
-        let q =
-            self.rope.forward(
-                context,
-                &q,
-                0,
-            )?;
-
-        let k =
-            self.rope.forward(
-                context,
-                &k,
-                0,
-            )?;
-
-        // -----------------------------------------------
-        // 4. K transpose
-        //
-        // K
-        // [B,H,S,D]
-        //
-        // →
-        //
-        // K^T
-        // [B,H,D,S]
-        // -----------------------------------------------
-
-        let k_t =
-            k.transpose(
-                2,
-                3,
-            )?;
-
-        // -----------------------------------------------
-        // 5. Q × Kᵀ
-        //
-        // [B,H,S,D]
-        // ×
-        // [B,H,D,S]
-        //
-        // →
-        //
-        // [B,H,S,S]
-        // -----------------------------------------------
-
-        let scores =
-            q.batched_matmul(
-                context,
-                &k_t,
-            )?;
-
-        // -----------------------------------------------
-        // 6. Scale + Causal Mask
-        // -----------------------------------------------
-
-        let scale =
-            1.0
-            / (self.head_dim as f32)
-                .sqrt();
-
-        let scores =
-            scores.attention_scale_mask(
+    let scores =
+        scores
+            .attention_scale_mask(
                 context,
                 scale,
-                0,
+                start_pos,
             )?;
 
-        // -----------------------------------------------
-        // 7. Softmax
-        // -----------------------------------------------
-
-        let probabilities =
-            scores.softmax_last_dim(
+    let probabilities =
+        scores
+            .softmax_last_dim(
                 context,
             )?;
 
-        // -----------------------------------------------
-        // 8. Attention probabilities × V
-        //
-        // [B,H,S,S]
-        // ×
-        // [B,H,S,D]
-        //
-        // →
-        //
-        // [B,H,S,D]
-        // -----------------------------------------------
+    let attention =
+        probabilities
+            .batched_matmul(
+                context,
+                all_v,
+            )?;
+    let attention =
+        attention
+            .permute(
+                &[0, 2, 1, 3],
+            )?
+            .contiguous(
+                context,
+            )?;
 
-        let context_tensor =
-            probabilities
-                .batched_matmul(
-                    context,
-                    &v,
-                )?;
+    let attention =
+        attention.reshape(
+            &[
+                seq_len,
+                self.hidden_size,
+            ],
+        )?;
 
-        // -----------------------------------------------
-        // 9. Heads 다시 합치기
-        //
-        // [B,H,S,D]
-        //
-        // →
-        //
-        // [B,S,H,D]
-        // -----------------------------------------------
-
-        let context_tensor =
-            context_tensor
-                .permute(
-                    &[0, 2, 1, 3],
-                )?;
-
-        // permute 결과는 non-contiguous다.
-        let context_tensor =
-            context_tensor
-                .contiguous(
-                    context,
-                )?;
-
-        // -----------------------------------------------
-        // 10. [B,S,H,D] → [S,hidden]
-        //
-        // 현재 batch=1
-        // -----------------------------------------------
-
-        let context_tensor =
-            context_tensor
-                .reshape(
-                    &[
-                        seq_len,
-                        self.hidden_size,
-                    ],
-                )?;
-
-        // -----------------------------------------------
-        // 11. Output Projection
-        // -----------------------------------------------
-
-        self.out_proj.forward(
+    self.out_proj
+        .forward(
             context,
-            &context_tensor,
+            &attention,
         )
     }
 }

@@ -9,6 +9,7 @@ mod softmax;
 mod rope;
 mod batched_matmul;
 mod attention_scale_mask;
+mod concat_sequence;
 
 pub use add::add_f32;
 pub use matmul::matmul_f32;
@@ -21,3 +22,4 @@ pub use softmax::softmax_f32;
 pub use rope::rope_f32;
 pub use batched_matmul::batched_matmul_f32;
 pub use attention_scale_mask::attention_scale_mask_f32;
+pub use concat_sequence::concat_sequence_f32;

@@ -18,6 +18,7 @@ Apple Metal GPU에서 소형 Transformer 언어 모델의 **추론 과정**을 �
 - `config.json`과 커스텀 바이너리 `model.bin` 가중치 포맷 로딩 및 shape 검증
 - Llama `tokenizer.model` 기반 SentencePiece encode/decode
 - argmax를 사용하는 greedy autoregressive generation 및 EOS 종료 처리
+- 레이어별 Key/Value cache를 이용한 토큰 단위 디코딩
 - import 시 원본 SentencePiece 파일을 변환 모델 폴더에 함께 복사
 
 ## 동작 환경
@@ -55,7 +56,7 @@ SentencePiece decode
 영어 이야기 출력
 ```
 
-`run`은 tokenizer와 모델의 vocabulary 크기를 대조합니다. 프롬프트와 생성 토큰의 총길이는 모델 context length를 넘지 않도록 제한됩니다. 상태 메시지는 stderr로, 생성된 이야기만 stdout으로 출력합니다.
+`run`은 tokenizer와 모델의 vocabulary 크기를 대조합니다. 프롬프트는 한 번만 전체 forward하고, 이후 생성 토큰은 레이어별 KV cache에 Key/Value를 누적해 한 토큰씩 forward합니다. 따라서 이전 토큰 전체를 매번 다시 계산하지 않습니다. 프롬프트와 생성 토큰의 총길이는 모델 context length를 넘지 않도록 제한됩니다. 상태 메시지는 stderr로, 생성된 이야기만 stdout으로 출력합니다.
 
 ## Hugging Face 모델 변환
 
@@ -79,16 +80,16 @@ cargo run -- import --source path/to/source-model --output path/to/output-model
 
 포함된 tiny 모델의 설정은 다음과 같습니다.
 
-| 항목 | 값 |
-| --- | ---: |
-| Vocabulary size | 4 |
-| Hidden size | 4 |
-| Intermediate size | 8 |
-| Transformer layers | 1 |
-| Attention heads | 2 |
-| Maximum sequence length | 128 |
-| RMSNorm epsilon | 0.00001 |
-| RoPE theta | 10000.0 |
+| 항목                    |      값 |
+| ----------------------- | ------: |
+| Vocabulary size         |       4 |
+| Hidden size             |       4 |
+| Intermediate size       |       8 |
+| Transformer layers      |       1 |
+| Attention heads         |       2 |
+| Maximum sequence length |     128 |
+| RMSNorm epsilon         | 0.00001 |
+| RoPE theta              | 10000.0 |
 
 ## 프로젝트 구조
 
@@ -154,7 +155,7 @@ cargo run -- run --model models/tinystories-llama-15m --prompt "Once upon a time
 
 - 학습(training), fine-tuning, 모델 다운로드 기능은 포함하지 않습니다.
 - 생성은 greedy decoding만 지원하며 temperature, top-k/top-p sampling은 없습니다.
-- KV cache가 없어 생성 단계마다 전체 토큰 시퀀스를 다시 forward 합니다.
+- 현재 KV cache는 이전 Key/Value를 매 단계 새 Metal buffer로 이어 붙입니다. 더 긴 문맥에서의 메모리 복사 비용을 줄이려면, 다음 단계에서 고정 크기 사전 할당 cache로 개선할 수 있습니다.
 - `f16` 추론, 배치 추론, CLI 인자 처리, 자동화된 단위/통합 테스트는 다음 단계의 개선 항목입니다.
 
 ## 기술 스택

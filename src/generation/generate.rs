@@ -40,19 +40,17 @@ pub fn generate_greedy_stream<F>(
     }
 
     let mut tokens = prompt_tokens.to_vec();
+    let mut cache =
+        model.new_kv_cache();
+
+    let mut logits = model.forward_with_cache(context, prompt_tokens, &mut cache)?;
 
     for _ in 0..max_new_tokens {
-        let logits = 
-            model.forward(
-                context,
-                &tokens,
-            )?;
-        
         let next_token = 
             greedy_next_token(
                 &logits,
             )?;
-        
+
         tokens.push(
             next_token,
         );
@@ -72,6 +70,13 @@ pub fn generate_greedy_stream<F>(
         {
             break;
         }
+
+        logits =
+            model.forward_with_cache(
+                context,
+                &[next_token],
+                &mut cache,
+            )?;
     }
 
     Ok(tokens)

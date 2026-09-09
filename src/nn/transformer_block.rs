@@ -5,6 +5,7 @@ use crate::error::{
 
 use crate::metal::MetalContext;
 use crate::tensor::Tensor;
+use crate::model::LayerKvCache;
 
 use super::{
     Mlp,
@@ -141,4 +142,50 @@ impl TransformerBlock {
             &mlp_output,
         )
     }
+    pub fn forward_with_cache(
+    &self,
+    context: &MetalContext,
+    x: &Tensor,
+    cache: &mut LayerKvCache,
+) -> Result<Tensor> {
+    let normalized =
+        self.attention_norm
+            .forward(
+                context,
+                x,
+            )?;
+
+    let attention =
+        self.attention
+            .forward_with_cache(
+                context,
+                &normalized,
+                cache,
+            )?;
+
+    let hidden =
+        x.add(
+            context,
+            &attention,
+        )?;
+
+    let normalized =
+        self.mlp_norm
+            .forward(
+                context,
+                &hidden,
+            )?;
+
+    let mlp =
+        self.mlp
+            .forward(
+                context,
+                &normalized,
+            )?;
+
+    hidden.add(
+        context,
+        &mlp,
+    )
+}
 }
