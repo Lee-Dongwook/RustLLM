@@ -114,6 +114,14 @@ cargo run -- import --source path/to/source-model --output path/to/output-model
 └── README.md
 ```
 
+## 최근 리팩터링
+
+기능 동작과 모델 파일 포맷을 유지한 채, 책임이 섞여 있던 코드를 다음과 같이 분리했습니다.
+
+- Transformer의 KV Cache 추론 경로를 `src/model/transformer/cache.rs`로 분리해 모델 조립·가중치 로딩과 실행 경로를 구분했습니다.
+- `ModelWeights`는 컬렉션 검증에 집중하고, `src/model/weight_codec.rs`가 `model.bin`의 저장·로드를 담당하도록 분리했습니다.
+- `Tensor`의 원소별 GPU 연산(`add`, `mul`, `SiLU`)을 `src/tensor/elementwise.rs`로 분리하고 dtype·shape·contiguous 처리를 공통화했습니다.
+
 ## 모델 파일 형식
 
 모델 디렉터리에는 아래 파일이 필요합니다.
@@ -142,7 +150,7 @@ cargo test
 cargo run -- run --model models/tinystories-llama-15m --prompt "Once upon a time"
 ```
 
-`cargo test`는 가중치 공유(`lm_head.weight`) 체크포인트의 변환, 미지원 GQA 모델의 거부, 그리고 포함된 TinyStories SentencePiece 모델의 encode/decode round trip을 확인합니다. `run`은 Apple Metal GPU가 필요합니다.
+`cargo test`는 KV Cache 초기화, 가중치 파일 저장·로드 round trip, 그리고 포함된 TinyStories SentencePiece 모델의 encode/decode round trip을 확인합니다. `run`은 Apple Metal GPU가 필요합니다.
 
 `import` 실행 시에는 `source tensors`, `converted tensors`, `copied tokenizer.model`이 출력되는지 확인합니다. 문제가 생기면 아래를 우선 확인하세요.
 

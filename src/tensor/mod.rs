@@ -4,6 +4,7 @@ mod shape;
 mod storage;
 mod strides;
 mod tensor;
+mod elementwise;
 
 pub use device::Device;
 pub use dtype::DType;
