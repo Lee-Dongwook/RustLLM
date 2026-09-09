@@ -6,6 +6,7 @@ use crate::ops::{
     mul_f32,
     softmax_f32,
     batched_matmul_f32,
+    attention_scale_mask_f32,
 };
 
 use crate::error::{
@@ -839,6 +840,75 @@ impl Tensor {
     Self::from_metal_buffer(
         buffer,
         &output_dims,
+        DType::F32,
+    )
+}
+
+pub fn attention_scale_mask(
+    &self,
+    context: &MetalContext,
+    scale: f32,
+    query_start_pos: usize,
+) -> Result<Self> {
+    if self.dtype
+        != DType::F32
+    {
+        return Err(
+            TinyError::UnsupportedDType(
+                format!(
+                    "{:?}",
+                    self.dtype,
+                ),
+            ),
+        );
+    }
+
+    if self.rank() < 2 {
+        return Err(
+            TinyError::InvalidDimension(
+                format!(
+                    "attention scores require rank >= 2, got rank {}",
+                    self.rank(),
+                ),
+            ),
+        );
+    }
+
+    let rank =
+        self.rank();
+
+    let query_len =
+        self.dim(
+            rank - 2,
+        )?;
+
+    let key_len =
+        self.dim(
+            rank - 1,
+        )?;
+
+    let input =
+        if self.is_contiguous() {
+            self.clone()
+        } else {
+            self.contiguous(
+                context,
+            )?
+        };
+
+    let buffer =
+        attention_scale_mask_f32(
+            context,
+            input.metal_buffer()?,
+            scale,
+            query_len,
+            key_len,
+            query_start_pos,
+        )?;
+
+    Self::from_metal_buffer(
+        buffer,
+        input.shape().dims(),
         DType::F32,
     )
 }

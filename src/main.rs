@@ -12,74 +12,42 @@ fn main() -> Result<()> {
     let context =
         MetalContext::new();
 
-    // batch 0
-    //
-    // [1 2]
-    // [3 4]
-    //
-    // batch 1
-    //
-    // [5 6]
-    // [7 8]
-    let a =
+    let scores =
         Tensor::from_f32_slice(
             &context,
             &[
-                1.0, 2.0,
-                3.0, 4.0,
-
-                5.0, 6.0,
-                7.0, 8.0,
+                1.0, 2.0, 3.0,
+                4.0, 5.0, 6.0,
+                7.0, 8.0, 9.0,
             ],
-            &[2, 2, 2],
+            &[1, 1, 3, 3],
         )?;
 
-    // batch 0
-    //
-    // [1 0]
-    // [0 1]
-    //
-    // batch 1
-    //
-    // [2 0]
-    // [0 2]
-    let b =
-        Tensor::from_f32_slice(
+    let masked =
+        scores.attention_scale_mask(
             &context,
-            &[
-                1.0, 0.0,
-                0.0, 1.0,
-
-                2.0, 0.0,
-                0.0, 2.0,
-            ],
-            &[2, 2, 2],
+            0.5,
+            0,
         )?;
 
-    let c =
-        a.batched_matmul(
+    println!(
+        "shape  = {:?}",
+        masked.shape().dims(),
+    );
+
+    println!(
+        "masked = {:?}",
+        masked.as_f32_slice()?,
+    );
+
+    let probs =
+        masked.softmax_last_dim(
             &context,
-            &b,
         )?;
 
     println!(
-        "A shape = {:?}",
-        a.shape().dims(),
-    );
-
-    println!(
-        "B shape = {:?}",
-        b.shape().dims(),
-    );
-
-    println!(
-        "C shape = {:?}",
-        c.shape().dims(),
-    );
-
-    println!(
-        "C data  = {:?}",
-        c.as_f32_slice()?,
+        "softmax = {:?}",
+        probs.as_f32_slice()?,
     );
 
     Ok(())
