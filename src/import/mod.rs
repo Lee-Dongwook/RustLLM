@@ -1,5 +1,6 @@
-mod safetensors;
 mod llama;
+mod safetensors;
+
 
 pub use safetensors::{
     import_safetensors,
@@ -9,4 +10,5 @@ pub use safetensors::{
 
 pub use llama::{
     load_llama_config,
+    map_llama_weights,
 };
