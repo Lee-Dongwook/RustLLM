@@ -40,8 +40,7 @@ pub fn generate_greedy_stream<F>(
     }
 
     let mut tokens = prompt_tokens.to_vec();
-    let mut cache =
-        model.new_kv_cache();
+    let mut cache = model.new_kv_cache(context)?;
 
     let mut logits = model.forward_with_cache(context, prompt_tokens, &mut cache)?;
 

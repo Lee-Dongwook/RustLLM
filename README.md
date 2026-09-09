@@ -31,13 +31,18 @@ Apple Metal GPU에서 소형 Transformer 언어 모델의 **추론 과정**을 �
 
 저장소 루트에서 실행합니다.
 
-처음 실행하거나 `models/tinystories-llama-15m`에 `tokenizer.model`이 없다면, 아래의 `import` 명령을 먼저 한 번 실행합니다.
+처음 실행하거나 `models/tinystories-llama-15m`에 `tokenizer.model`이 없다면, 먼저 아래 명령으로 모델을 변환합니다.
 
 ```bash
-cargo run -- run \\
-  --model models/tinystories-llama-15m \\
-  --prompt "Once upon a time" \\
-  --max-tokens 64
+cargo run -- import \\
+  --source models/source/tinystories-llama-15m \\
+  --output models/tinystories-llama-15m
+```
+
+변환 후 생성 명령을 실행합니다.
+
+```bash
+cargo run -- run --model models/tinystories-llama-15m --prompt "Once upon a time" --max-tokens 64
 ```
 
 이 명령은 아래 전체 경로를 실행합니다.
@@ -99,7 +104,10 @@ cargo run -- import --source path/to/source-model --output path/to/output-model
 ├── models/source/       # Hugging Face 형식 Llama 입력 모델
 ├── models/tinystories-llama-15m/
 │   ├── config.json      # 변환된 내부 모델 설정
-│   └── model.bin        # 변환된 가중치
+│   ├── model.bin        # 변환된 가중치
+│   ├── tokenizer.model
+│   ├── tokenizer_config.json
+│   └── special_tokens_map.json
 ├── src/
 │   ├── generation/      # greedy sampler와 생성 루프
 │   ├── metal/           # Metal device, command queue, pipeline cache
@@ -164,7 +172,7 @@ cargo run -- run --model models/tinystories-llama-15m --prompt "Once upon a time
 - 학습(training), fine-tuning, 모델 다운로드 기능은 포함하지 않습니다.
 - 생성은 greedy decoding만 지원하며 temperature, top-k/top-p sampling은 없습니다.
 - 현재 KV cache는 이전 Key/Value를 매 단계 새 Metal buffer로 이어 붙입니다. 더 긴 문맥에서의 메모리 복사 비용을 줄이려면, 다음 단계에서 고정 크기 사전 할당 cache로 개선할 수 있습니다.
-- `f16` 추론, 배치 추론, CLI 인자 처리, 자동화된 단위/통합 테스트는 다음 단계의 개선 항목입니다.
+- `f16` 추론, 배치 추론, 자동화된 단위/통합 테스트는 다음 단계의 개선 항목입니다.
 
 ## 기술 스택
 

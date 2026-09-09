@@ -8,8 +8,14 @@ use super::{KvCache, Transformer};
 
 impl Transformer {
     /// Creates a cache whose layer count and context limit match this model.
-    pub fn new_kv_cache(&self) -> KvCache {
-        KvCache::new(self.config.num_layers, self.config.max_seq_len)
+    pub fn new_kv_cache(&self, context: &MetalContext) -> Result<KvCache> {
+        KvCache::new(
+            context,
+            self.config.num_layers,
+            self.config.max_seq_len,
+            self.config.num_heads,
+            self.config.head_dim(),
+        )
     }
 
     /// Appends the given tokens' key/value tensors and returns their logits.

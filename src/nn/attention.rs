@@ -162,7 +162,12 @@ impl SelfAttention {
         context: &MetalContext,
         input: &Tensor,
     ) -> Result<Tensor> {
-        let mut cache = LayerKvCache::new();
+        let mut cache = LayerKvCache::new(
+            context,
+            self.num_heads,
+            self.rope.max_seq_len(),
+            self.head_dim,
+        )?;
         self.forward_with_cache(context, input, &mut cache)
     }
 
@@ -245,11 +250,9 @@ impl SelfAttention {
         v,
     )?;
 
-    let all_k =
-        cache.key()?;
+    let all_k = cache.key()?;
 
-    let all_v =
-        cache.value()?;
+    let all_v = cache.value()?;
 
     let k_transposed =
         all_k.transpose(
@@ -289,7 +292,7 @@ impl SelfAttention {
         probabilities
             .batched_matmul(
                 context,
-                all_v,
+                &all_v,
             )?;
     let attention =
         attention

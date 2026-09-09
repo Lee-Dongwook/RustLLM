@@ -358,6 +358,24 @@ impl Tensor {
         })
     }
 
+    /// Returns a zero-copy view over a contiguous range of one dimension.
+    pub fn narrow(
+        &self,
+        dim: usize,
+        start: usize,
+        len: usize,
+    ) -> Result<Self> {
+        if dim >= self.rank() || start.checked_add(len).is_none_or(|end| end > self.shape.dims()[dim]) {
+            return Err(TinyError::InvalidDimension("tensor narrow range is out of bounds".to_string()));
+        }
+        if start != 0 {
+            return Err(TinyError::InvalidDimension("tensor narrow currently supports ranges starting at zero".to_string()));
+        }
+        let mut dims = self.shape.dims().to_vec();
+        dims[dim] = len;
+        Ok(Self { storage: Arc::clone(&self.storage), shape: Shape::new(&dims)?, strides: self.strides.clone(), dtype: self.dtype })
+    }
+
     pub fn as_f32_slice(
         &self,
     ) -> Result<&[f32]> {
