@@ -31,6 +31,18 @@ impl Storage {
         }
     }
 
+    pub fn as_f16_slice(&self) -> Result<&[half::f16]> {
+        match self {
+            Storage::Metal(buffer) => Ok(buffer.as_f16_slice()),
+        }
+    }
+
+    pub fn byte_len(&self) -> usize {
+        match self {
+            Storage::Metal(buffer) => buffer.byte_len(),
+        }
+    }
+
     pub fn metal_buffer(&self) -> Result<&MetalBuffer> {
         match self {
             Storage::Metal(buffer) => Ok(buffer),

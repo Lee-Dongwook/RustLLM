@@ -8,6 +8,7 @@ use super::MetalContext;
 pub struct MetalBuffer {
     raw: Buffer,
     len: usize,
+    byte_len: usize,
 }
 
 impl MetalBuffer {
@@ -28,6 +29,7 @@ impl MetalBuffer {
         Self {
             raw,
             len: data.len(),
+            byte_len: std::mem::size_of_val(data),
         }
     }
 
@@ -48,6 +50,25 @@ impl MetalBuffer {
         Self {
             raw,
             len: data.len(),
+            byte_len: std::mem::size_of_val(data),
+        }
+    }
+
+    pub fn from_f16_slice(context: &MetalContext, data: &[half::f16]) -> Self {
+        assert!(
+            !data.is_empty(),
+            "빈 데이터로 MetalBuffer를 만들 수 없습니다."
+        );
+        let byte_len = std::mem::size_of_val(data);
+        let raw = context.device.new_buffer_with_data(
+            data.as_ptr() as *const c_void,
+            byte_len as u64,
+            MTLResourceOptions::StorageModeShared,
+        );
+        Self {
+            raw,
+            len: data.len(),
+            byte_len,
         }
     }
 
@@ -60,11 +81,19 @@ impl MetalBuffer {
             .device
             .new_buffer(byte_len, MTLResourceOptions::StorageModeShared);
 
-        Self { raw, len }
+        Self {
+            raw,
+            len,
+            byte_len: byte_len as usize,
+        }
     }
 
     pub fn len(&self) -> usize {
         self.len
+    }
+
+    pub fn byte_len(&self) -> usize {
+        self.byte_len
     }
 
     pub fn is_empty(&self) -> bool {
@@ -78,6 +107,11 @@ impl MetalBuffer {
     pub fn as_slice(&self) -> &[f32] {
         let ptr = self.raw.contents() as *const f32;
 
+        unsafe { std::slice::from_raw_parts(ptr, self.len) }
+    }
+
+    pub fn as_f16_slice(&self) -> &[half::f16] {
+        let ptr = self.raw.contents() as *const half::f16;
         unsafe { std::slice::from_raw_parts(ptr, self.len) }
     }
 }

@@ -43,6 +43,28 @@ impl Tensor {
         })
     }
 
+    pub fn from_f16_slice(
+        context: &MetalContext,
+        data: &[half::f16],
+        dims: &[usize],
+    ) -> Result<Self> {
+        let shape = Shape::new(dims)?;
+        if data.len() != shape.numel() {
+            return Err(TinyError::InvalidShape(format!(
+                "shape {:?} requires {} elements, but {} were provided",
+                shape.dims(),
+                shape.numel(),
+                data.len()
+            )));
+        }
+        Ok(Self {
+            storage: Arc::new(Storage::Metal(MetalBuffer::from_f16_slice(context, data))),
+            shape: shape.clone(),
+            strides: Strides::contiguous(&shape),
+            dtype: DType::F16,
+        })
+    }
+
     pub fn contiguous(&self, context: &MetalContext) -> Result<Self> {
         if self.is_contiguous() {
             return Ok(self.clone());
@@ -169,6 +191,10 @@ impl Tensor {
         self.shape.numel()
     }
 
+    pub fn byte_len(&self) -> usize {
+        self.numel() * self.dtype.size_in_bytes()
+    }
+
     pub fn len(&self) -> usize {
         self.numel()
     }
@@ -254,6 +280,30 @@ impl Tensor {
         self.storage.as_f32_slice()
     }
 
+    pub fn as_f16_slice(&self) -> Result<&[half::f16]> {
+        if self.dtype != DType::F16 {
+            return Err(TinyError::UnsupportedDType(format!("{:?}", self.dtype)));
+        }
+        if !self.is_contiguous() {
+            return Err(TinyError::NonContiguousTensor(format!(
+                "shape={:?}",
+                self.shape.dims()
+            )));
+        }
+        self.storage.as_f16_slice()
+    }
+
+    pub fn to_f32_vec(&self) -> Result<Vec<f32>> {
+        match self.dtype {
+            DType::F32 => Ok(self.as_f32_slice()?.to_vec()),
+            DType::F16 => Ok(self
+                .as_f16_slice()?
+                .iter()
+                .map(|value| value.to_f32())
+                .collect()),
+        }
+    }
+
     pub(crate) fn metal_buffer(&self) -> Result<&MetalBuffer> {
         self.storage.metal_buffer()
     }
@@ -265,7 +315,9 @@ impl Tensor {
     ) -> Result<Self> {
         let shape = Shape::new(dims)?;
 
-        if buffer.len() != shape.numel() {
+        if buffer.len() != shape.numel()
+            || buffer.byte_len() != shape.numel() * dtype.size_in_bytes()
+        {
             return Err(TinyError::InvalidShape(format!(
                 "buffer has {} elements, but shape {:?} requires {}",
                 buffer.len(),
