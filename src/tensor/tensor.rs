@@ -5,6 +5,7 @@ use crate::ops::{
     silu_f32,
     mul_f32,
     softmax_f32,
+    batched_matmul_f32,
 };
 
 use crate::error::{
@@ -703,4 +704,142 @@ impl Tensor {
         DType::F32,
     )
   }
+
+  pub fn batched_matmul(
+    &self,
+    context: &MetalContext,
+    rhs: &Tensor,
+) -> Result<Self> {
+    if self.dtype != DType::F32
+        || rhs.dtype != DType::F32
+    {
+        return Err(
+            TinyError::UnsupportedDType(
+                "batched matmul currently supports only F32"
+                    .to_string(),
+            ),
+        );
+    }
+
+    if self.rank() < 3 {
+        return Err(
+            TinyError::InvalidDimension(
+                format!(
+                    "batched matmul requires rank >= 3, left rank is {}",
+                    self.rank(),
+                ),
+            ),
+        );
+    }
+
+    if rhs.rank()
+        != self.rank()
+    {
+        return Err(
+            TinyError::InvalidDimension(
+                format!(
+                    "batched matmul requires tensors with equal rank, got {} and {}",
+                    self.rank(),
+                    rhs.rank(),
+                ),
+            ),
+        );
+    }
+
+    let rank =
+        self.rank();
+
+    let lhs_dims =
+        self.shape.dims();
+
+    let rhs_dims =
+        rhs.shape.dims();
+
+    // 마지막 두 차원을 제외한
+    // 모든 batch dimension이 같아야 한다.
+    if lhs_dims[..rank - 2]
+        != rhs_dims[..rank - 2]
+    {
+        return Err(
+            TinyError::ShapeMismatch {
+                left:
+                    lhs_dims.to_vec(),
+
+                right:
+                    rhs_dims.to_vec(),
+            },
+        );
+    }
+
+    let m =
+        lhs_dims[rank - 2];
+
+    let k =
+        lhs_dims[rank - 1];
+
+    let rhs_k =
+        rhs_dims[rank - 2];
+
+    let n =
+        rhs_dims[rank - 1];
+
+    if k != rhs_k {
+        return Err(
+            TinyError::ShapeMismatch {
+                left:
+                    lhs_dims.to_vec(),
+
+                right:
+                    rhs_dims.to_vec(),
+            },
+        );
+    }
+
+    let batch_count: usize =
+        lhs_dims[..rank - 2]
+            .iter()
+            .product();
+
+    let lhs =
+        if self.is_contiguous() {
+            self.clone()
+        } else {
+            self.contiguous(
+                context,
+            )?
+        };
+
+    let rhs =
+        if rhs.is_contiguous() {
+            rhs.clone()
+        } else {
+            rhs.contiguous(
+                context,
+            )?
+        };
+
+    let buffer =
+        batched_matmul_f32(
+            context,
+            lhs.metal_buffer()?,
+            rhs.metal_buffer()?,
+            batch_count,
+            m,
+            k,
+            n,
+        )?;
+
+    let mut output_dims =
+        lhs_dims[..rank - 2]
+            .to_vec();
+
+    output_dims.push(m);
+    output_dims.push(n);
+
+    Self::from_metal_buffer(
+        buffer,
+        &output_dims,
+        DType::F32,
+    )
+}
 }

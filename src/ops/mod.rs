@@ -7,6 +7,7 @@ mod silu;
 mod mul;
 mod softmax;
 mod rope;
+mod batched_matmul;
 
 pub use add::vector_add;
 pub use matmul::matmul_f32;
@@ -17,4 +18,5 @@ pub use silu::silu_f32;
 pub use mul::mul_f32;
 pub use softmax::softmax_f32;
 pub use rope::rope_f32;
+pub use batched_matmul::batched_matmul_f32;
 
