@@ -7,7 +7,7 @@ use tiny_metal_llm::{
     error::{
         Result,
         TinyError,
-    }, generation::generate_greedy_stream, metal::MetalContext, model::Transformer, tokenizer::{SentencePieceTokenizer, StreamingDecoder, Tokenizer},
+    }, generation::{generate_stream, GenerationConfig}, metal::MetalContext, model::Transformer, tokenizer::{SentencePieceTokenizer, StreamingDecoder, Tokenizer},
 };
 
 use crate::cli::RunArgs;
@@ -110,7 +110,9 @@ pub fn execute(
 
     let mut generated_count = 0usize;
 
-    generate_greedy_stream(&context, &model, &prompt_tokens, max_new_tokens,
+    let generation_config = GenerationConfig { max_new_tokens, temperature: args.temperature, top_k: args.top_k, top_p: args.top_p, seed: args.seed };
+    generation_config.validate()?;
+    generate_stream(&context, &model, &prompt_tokens, &generation_config,
         tokenizer.eos_token_id(),
         |token_id| {
             generated_count += 1;

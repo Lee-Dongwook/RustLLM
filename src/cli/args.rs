@@ -49,11 +49,14 @@ pub struct RunArgs {
     )]
     pub max_tokens: usize,
 
-    #[arg(
-        long,
-        default_value_t = false,
-    )]
-    pub greedy: bool,
+    #[arg(long, default_value_t = 0.0)]
+    pub temperature: f32,
+    #[arg(long)]
+    pub top_k: Option<usize>,
+    #[arg(long, default_value_t = 1.0)]
+    pub top_p: f32,
+    #[arg(long, default_value_t = 42)]
+    pub seed: u64,
 }
 
 #[derive(Debug, Args)]

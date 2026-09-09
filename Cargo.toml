@@ -16,3 +16,4 @@ clap = {
     features = ["derive"]
 }
 sentencepiece = "0.14"
+rand = "0.8"
