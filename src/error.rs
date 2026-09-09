@@ -23,6 +23,13 @@ pub enum TinyError {
     },
 
     Sampling(String),
+
+    Io(String),
+
+    ModelFormat(String),
+
+    MissingWeight(String),
+
     Metal(String),
 }
 
@@ -105,6 +112,27 @@ impl fmt::Display for TinyError {
                     "sampling error: {message}"
                 )
             }
+
+            TinyError::Io(message) => {
+                write!(
+                    f,
+                    "I/O error: {message}"
+                )
+            }
+
+            TinyError::ModelFormat(message) => {
+                write!(
+                    f,
+                    "model format error: {message}"
+                )
+            }
+
+            TinyError::MissingWeight(name) => {
+                write!(
+                    f,
+                    "missing model weight: {name}"
+                )
+            }
         }
     }
 }
@@ -113,3 +141,13 @@ impl std::error::Error for TinyError {}
 
 pub type Result<T> =
     std::result::Result<T, TinyError>;
+
+impl From<std::io::Error> for TinyError {
+    fn from(
+        error: std::io::Error,
+    ) -> Self {
+        TinyError::Io(
+            error.to_string(),
+        )
+    }
+}

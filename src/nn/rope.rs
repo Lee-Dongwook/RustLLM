@@ -11,6 +11,7 @@ use crate::tensor::{
     Tensor,
 };
 
+#[derive(Clone)]
 pub struct RotaryEmbedding {
     cos_table: Tensor,
     sin_table: Tensor,

@@ -1,3 +1,11 @@
+use std::fs;
+use std::path::Path;
+
+use serde::{
+    Deserialize,
+    Serialize,
+};
+
 use crate::error::{
     Result,
     TinyError,
@@ -6,6 +14,8 @@ use crate::error::{
 #[derive(
     Debug,
     Clone,
+    Serialize,
+    Deserialize,
 )]
 pub struct ModelConfig {
     pub vocab_size: usize,
@@ -142,5 +152,55 @@ impl ModelConfig {
     ) -> usize {
         self.hidden_size
             / self.num_heads
+    }
+
+    pub fn load_json(
+        path: impl AsRef<Path>,
+    ) -> Result<Self> {
+        let text = 
+            fs::read_to_string(
+                path,
+        )?;
+
+        let config: Self = 
+            serde_json::from_str(
+                &text,
+            )
+            .map_err(|error| {
+                TinyError::ModelFormat(
+                    format!(
+                        "invalid config.json: {error}"
+                    ),
+                )
+            })?;
+        
+        config.validate()?;
+
+        Ok(config)
+    }
+
+    pub fn save_json(
+        &self,
+        path: impl AsRef<Path>,
+    ) -> Result<()> {
+        self.validate()?;
+
+        let text =
+            serde_json::to_string_pretty(
+                self,
+            )
+            .map_err(|error| {
+                TinyError::ModelFormat(format!(
+                    "failed to serialize config: {error}"
+                    ),
+                )
+            })?;
+        
+        fs::write(
+            path,
+            text,
+        )?;
+
+        Ok(())
     }
 }
