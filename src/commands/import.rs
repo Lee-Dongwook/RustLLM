@@ -92,5 +92,32 @@ pub fn execute(
         args.output.display(),
     );
 
+    for file_name in [
+        "tokenizer.model",
+        "tokenizer_config.json",
+        "special_tokens_map.json",
+    ] {
+        let source =
+            args.source.join(
+                file_name,
+            );
+
+        if source.exists() {
+            let target =
+                args.output.join(
+                    file_name,
+                );
+
+            fs::copy(
+                &source,
+                &target,
+            )?;
+
+            println!(
+                "copied {file_name}",
+            );
+        }
+    }
+
     Ok(())
 }

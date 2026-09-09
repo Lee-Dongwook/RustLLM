@@ -9,6 +9,11 @@ use ::metal:: {
     Device,
 };
 
+use crate::error::{
+    Result,
+    TinyError,
+};
+
 pub struct MetalContext {
     pub device: Device,
     pub command_queue: CommandQueue,
@@ -18,19 +23,24 @@ pub struct MetalContext {
 }
 
 impl MetalContext {
-    pub fn new() -> Self {
+    pub fn new() -> Result<Self> {
         let device =
-            Device::system_default().expect("Metal GPU를 찾을 수 없습니다.");
+            Device::system_default().ok_or_else(|| {
+                TinyError::Metal(
+                    "no Metal GPU is available; run inference on macOS with an Apple Metal-capable GPU"
+                        .to_string(),
+                )
+            })?;
         
         let command_queue = device.new_command_queue();
 
-        Self {
+        Ok(Self {
             device,
             command_queue,
             pipelines: RefCell::new(
                 HashMap::new(),
             )
-        }
+        })
     }
 
     pub fn pipeline(

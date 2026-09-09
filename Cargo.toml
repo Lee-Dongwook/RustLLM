@@ -15,3 +15,4 @@ clap = {
     version = "4",
     features = ["derive"]
 }
+sentencepiece = "0.14"

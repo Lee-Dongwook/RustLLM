@@ -9,6 +9,7 @@ use crate::error::{
     TinyError,
 };
 
+use super::Tokenizer;
 
 #[derive(
     Debug,
@@ -26,18 +27,16 @@ struct TokenizerFile {
 }
 
 #[derive(Debug)]
-pub struct Tokenizer {
+pub struct CharTokenizer {
     id_to_token: Vec<String>,
-
     token_to_id:
         HashMap<String, u32>,
-
     bos_token_id: Option<u32>,
     eos_token_id: Option<u32>,
     unk_token_id: Option<u32>,
 }
 
-impl Tokenizer {
+impl CharTokenizer {
     pub fn load_json(
         path: impl AsRef<Path>,
     ) -> Result<Self> {
@@ -300,6 +299,45 @@ impl Tokenizer {
 
             || self.unk_token_id
                 == Some(token_id)
+    }
+}
+
+impl Tokenizer for CharTokenizer {
+    fn encode(
+        &self,
+        text: &str,
+    ) -> Result<Vec<u32>> {
+        CharTokenizer::encode(self, text)
+    }
+
+    fn decode(
+        &self,
+        token_ids: &[u32],
+        skip_special_tokens: bool,
+    ) -> Result<String> {
+        CharTokenizer::decode(
+            self,
+            token_ids,
+            skip_special_tokens,
+        )
+    }
+
+    fn vocab_size(
+        &self,
+    ) -> usize {
+        CharTokenizer::vocab_size(self)
+    }
+
+    fn bos_token_id(
+        &self,
+    ) -> Option<u32> {
+        CharTokenizer::bos_token_id(self)
+    }
+
+    fn eos_token_id(
+        &self,
+    ) -> Option<u32> {
+        CharTokenizer::eos_token_id(self)
     }
 }
 
