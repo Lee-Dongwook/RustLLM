@@ -1,0 +1,7 @@
+{
+  "type": "char",
+  "vocab": ["a", "b", " ", "<eos>"],
+  "bos_token_id": null,
+  "eos_token_id": 3,
+  "unk_token_id": null
+}

@@ -24,6 +24,8 @@ pub enum TinyError {
 
     Sampling(String),
 
+    Tokenizer(String),
+
     Io(String),
 
     ModelFormat(String),
@@ -131,6 +133,13 @@ impl fmt::Display for TinyError {
                 write!(
                     f,
                     "missing model weight: {name}"
+                )
+            }
+
+            TinyError::Tokenizer(message) => {
+                write!(
+                    f,
+                    "tokenizer error: {message}"
                 )
             }
         }
