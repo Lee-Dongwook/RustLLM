@@ -25,6 +25,9 @@ use super::{
     KvCache,
 };
 
+mod cache;
+
+
 pub struct Transformer {
     config: ModelConfig,
 
@@ -514,112 +517,6 @@ impl Transformer {
             lm_head,
         )
     }
-    pub fn new_kv_cache(
-    &self,
-) -> KvCache {
-    KvCache::new(
-        self.config.num_layers,
-        self.config.max_seq_len,
-    )
-}
-
-pub fn forward_with_cache(
-    &self,
-    context: &MetalContext,
-    token_ids: &[u32],
-    cache: &mut KvCache,
-) -> Result<Tensor> {
-    if token_ids.is_empty() {
-        return Err(
-            TinyError::ModelFormat(
-                "token_ids cannot be empty"
-                    .to_string(),
-            ),
-        );
-    }
-
-    if cache.num_layers()
-        != self.blocks.len()
-    {
-        return Err(
-            TinyError::ModelFormat(
-                format!(
-                    "KV cache has {} layers but model has {}",
-                    cache.num_layers(),
-                    self.blocks.len(),
-                ),
-            ),
-        );
-    }
-
-    if cache.max_seq_len()
-        != self.config.max_seq_len
-    {
-        return Err(
-            TinyError::ModelFormat(
-                format!(
-                    "KV cache context length {} does not match model context length {}",
-                    cache.max_seq_len(),
-                    self.config.max_seq_len,
-                ),
-            ),
-        );
-    }
-
-    let mut hidden =
-        self.token_embedding
-            .forward(
-                context,
-                token_ids,
-            )?;
-
-    for (
-        layer_index,
-        layer,
-    ) in self.blocks
-        .iter()
-        .enumerate()
-    {
-        let layer_cache =
-            cache.layer_mut(
-                layer_index,
-            )?;
-
-        if layer_cache.len()
-            + token_ids.len()
-            > self.config.max_seq_len
-        {
-            return Err(
-                TinyError::PositionOutOfRange {
-                    start_pos: layer_cache.len(),
-                    seq_len: token_ids.len(),
-                    max_seq_len: self.config.max_seq_len,
-                },
-            );
-        }
-
-        hidden =
-            layer
-                .forward_with_cache(
-                    context,
-                    &hidden,
-                    layer_cache,
-                )?;
-    }
-
-    let hidden =
-        self.final_norm
-            .forward(
-                context,
-                &hidden,
-            )?;
-
-    self.lm_head
-        .forward(
-            context,
-            &hidden,
-        )
-}
 }
 
 fn take_tensor(
