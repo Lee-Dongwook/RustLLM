@@ -1,10 +1,6 @@
 use std::path::PathBuf;
 
-use clap::{
-    Args,
-    Parser,
-    Subcommand,
-};
+use clap::{Args, Parser, Subcommand};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -17,10 +13,7 @@ pub struct Cli {
     pub command: Command,
 }
 
-#[derive(
-    Debug,
-    Subcommand,
-)]
+#[derive(Debug, Subcommand)]
 pub enum Command {
     Run(RunArgs),
 
@@ -31,22 +24,13 @@ pub enum Command {
 
 #[derive(Debug, Args)]
 pub struct RunArgs {
-    #[arg(
-        long,
-        short = 'm',
-    )]
+    #[arg(long, short = 'm')]
     pub model: PathBuf,
 
-    #[arg(
-        long,
-        short = 'p',
-    )]
+    #[arg(long, short = 'p')]
     pub prompt: String,
 
-    #[arg(
-        long,
-        default_value_t = 64,
-    )]
+    #[arg(long, default_value_t = 64)]
     pub max_tokens: usize,
 
     #[arg(long, default_value_t = 0.0)]
@@ -61,24 +45,15 @@ pub struct RunArgs {
 
 #[derive(Debug, Args)]
 pub struct ImportArgs {
-    #[arg(
-        long,
-        short = 's',
-    )]
+    #[arg(long, short = 's')]
     pub source: PathBuf,
 
-    #[arg(
-        long,
-        short = 'o',
-    )]
+    #[arg(long, short = 'o')]
     pub output: PathBuf,
 }
 
 #[derive(Debug, Args)]
 pub struct InspectArgs {
-    #[arg(
-        long,
-        short = 'm',
-    )]
+    #[arg(long, short = 'm')]
     pub model: PathBuf,
 }

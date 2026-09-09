@@ -37,61 +37,34 @@ pub enum TinyError {
 }
 
 impl fmt::Display for TinyError {
-    fn fmt(
-        &self,
-        f: &mut fmt::Formatter<'_>,
-    ) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             TinyError::InvalidArgument(message) => {
-                write!(
-                    f,
-                    "invalid argument: {message}"
-                )
+                write!(f, "invalid argument: {message}")
             }
 
             TinyError::InvalidShape(message) => {
-                write!(
-                    f,
-                    "invalid shape: {message}"
-                )
+                write!(f, "invalid shape: {message}")
             }
 
-            TinyError::ShapeMismatch {
-                left,
-                right,
-            } => {
-                write!(
-                    f,
-                    "shape mismatch: left={left:?}, right={right:?}"
-                )
+            TinyError::ShapeMismatch { left, right } => {
+                write!(f, "shape mismatch: left={left:?}, right={right:?}")
             }
 
             TinyError::InvalidDimension(message) => {
-                write!(
-                    f,
-                    "invalid dimension: {message}"
-                )
+                write!(f, "invalid dimension: {message}")
             }
 
             TinyError::UnsupportedDType(dtype) => {
-                write!(
-                    f,
-                    "unsupported dtype: {dtype}"
-                )
+                write!(f, "unsupported dtype: {dtype}")
             }
 
             TinyError::Metal(message) => {
-                write!(
-                    f,
-                    "metal error: {message}"
-                )
+                write!(f, "metal error: {message}")
             }
 
             TinyError::NonContiguousTensor(message) => {
-                write!(
-                    f,
-                    "non-contiguous tensor: {message}"
-                )
+                write!(f, "non-contiguous tensor: {message}")
             }
 
             TinyError::InvalidTokenId {
@@ -117,38 +90,23 @@ impl fmt::Display for TinyError {
             }
 
             TinyError::Sampling(message) => {
-                write!(
-                    f,
-                    "sampling error: {message}"
-                )
+                write!(f, "sampling error: {message}")
             }
 
             TinyError::Io(message) => {
-                write!(
-                    f,
-                    "I/O error: {message}"
-                )
+                write!(f, "I/O error: {message}")
             }
 
             TinyError::ModelFormat(message) => {
-                write!(
-                    f,
-                    "model format error: {message}"
-                )
+                write!(f, "model format error: {message}")
             }
 
             TinyError::MissingWeight(name) => {
-                write!(
-                    f,
-                    "missing model weight: {name}"
-                )
+                write!(f, "missing model weight: {name}")
             }
 
             TinyError::Tokenizer(message) => {
-                write!(
-                    f,
-                    "tokenizer error: {message}"
-                )
+                write!(f, "tokenizer error: {message}")
             }
         }
     }
@@ -156,15 +114,10 @@ impl fmt::Display for TinyError {
 
 impl std::error::Error for TinyError {}
 
-pub type Result<T> =
-    std::result::Result<T, TinyError>;
+pub type Result<T> = std::result::Result<T, TinyError>;
 
 impl From<std::io::Error> for TinyError {
-    fn from(
-        error: std::io::Error,
-    ) -> Self {
-        TinyError::Io(
-            error.to_string(),
-        )
+    fn from(error: std::io::Error) -> Self {
+        TinyError::Io(error.to_string())
     }
 }

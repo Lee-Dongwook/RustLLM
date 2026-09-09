@@ -1,6 +1,6 @@
 use super::{
-    weights::{checked_numel, DTYPE_F32, MAGIC, MAX_NAME_LEN, MAX_RANK, VERSION},
     ModelWeights,
+    weights::{DTYPE_F32, MAGIC, MAX_NAME_LEN, MAX_RANK, VERSION, checked_numel},
 };
 use crate::error::{Result, TinyError};
 use std::{
@@ -113,7 +113,9 @@ pub(super) fn load(path: impl AsRef<Path>) -> Result<ModelWeights> {
         ];
         input.read_exact(&mut bytes)?;
         let data = bytes
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
             .collect();
         weights.insert_f32(name, &shape, data)?;

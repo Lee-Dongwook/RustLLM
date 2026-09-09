@@ -1,10 +1,11 @@
 mod device;
 mod dtype;
+mod elementwise;
 mod shape;
 mod storage;
 mod strides;
+#[allow(clippy::module_inception)]
 mod tensor;
-mod elementwise;
 
 pub use device::Device;
 pub use dtype::DType;

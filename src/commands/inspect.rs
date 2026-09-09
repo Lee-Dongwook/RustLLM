@@ -1,72 +1,31 @@
-use tiny_metal_llm::{
-    error::Result,
-    model::ModelConfig,
-};
+use tiny_metal_llm::{error::Result, model::ModelConfig};
 
 use crate::cli::InspectArgs;
 
-pub fn execute(
-    args: InspectArgs,
-) -> Result<()> {
-    let config_path =
-        args.model
-            .join(
-                "config.json"
-            );
-    
-    let config = 
-        ModelConfig::load_json(
-            config_path,
-    )?;
+pub fn execute(args: InspectArgs) -> Result<()> {
+    let config_path = args.model.join("config.json");
 
-    println!(
-        "Model"
-    );
+    let config = ModelConfig::load_json(config_path)?;
 
-    println!(
-        "  vocab size        : {}",
-        config.vocab_size,
-    );
+    println!("Model");
 
-    println!(
-        "  hidden size       : {}",
-        config.hidden_size,
-    );
+    println!("  vocab size        : {}", config.vocab_size,);
 
-    println!(
-        "  intermediate size : {}",
-        config.intermediate_size,
-    );
+    println!("  hidden size       : {}", config.hidden_size,);
 
-    println!(
-        "  layers            : {}",
-        config.num_layers,
-    );
+    println!("  intermediate size : {}", config.intermediate_size,);
 
-    println!(
-        "  attention heads   : {}",
-        config.num_heads,
-    );
+    println!("  layers            : {}", config.num_layers,);
 
-    println!(
-        "  head dimension    : {}",
-        config.head_dim(),
-    );
+    println!("  attention heads   : {}", config.num_heads,);
 
-    println!(
-        "  context length    : {}",
-        config.max_seq_len,
-    );
+    println!("  head dimension    : {}", config.head_dim(),);
 
-    println!(
-        "  RMSNorm epsilon   : {}",
-        config.rms_norm_eps,
-    );
+    println!("  context length    : {}", config.max_seq_len,);
 
-    println!(
-        "  RoPE theta        : {}",
-        config.rope_theta,
-    );
+    println!("  RMSNorm epsilon   : {}", config.rms_norm_eps,);
+
+    println!("  RoPE theta        : {}", config.rope_theta,);
 
     Ok(())
 }

@@ -3,15 +3,9 @@ use std::mem;
 
 use ::metal::MTLSize;
 
-use crate::error::{
-    Result,
-    TinyError,
-};
+use crate::error::{Result, TinyError};
 
-use crate::metal::{
-    MetalBuffer,
-    MetalContext,
-};
+use crate::metal::{MetalBuffer, MetalContext};
 
 pub fn materialize_contiguous_f32(
     context: &MetalContext,
@@ -20,150 +14,84 @@ pub fn materialize_contiguous_f32(
     strides: &[usize],
 ) -> Result<MetalBuffer> {
     if dims.len() != strides.len() {
-        return Err(
-            TinyError::InvalidShape(
-                "shape rank and strides rank differ".to_string(),
-            ),
-        );
+        return Err(TinyError::InvalidShape(
+            "shape rank and strides rank differ".to_string(),
+        ));
     }
 
     let numel: usize = dims.iter().product();
 
     let result = MetalBuffer::empty(context, numel);
 
-    let dims_u32: Vec<u32> = 
-        dims.iter().map(|&value| {
-            u32::try_from(value)
-        })
-        .collect::<std::result::Result<Vec<_>,_>>()
-        .map_err(|_| {
-            TinyError::InvalidShape(
-                "shape dimension exceeds u32".to_string(),
-            )
-        })?;
-    
-    let strides_u32: Vec<u32> = 
-        strides.iter().map(|&value| {
-            u32::try_from(value)
-        })
-        .collect::<std::result::Result<Vec<_>,_>>()
-        .map_err(|_| {
-            TinyError::InvalidShape(
-                "stride exceeds u32".to_string(),
-            )
-        })?;
+    let dims_u32: Vec<u32> = dims
+        .iter()
+        .map(|&value| u32::try_from(value))
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(|_| TinyError::InvalidShape("shape dimension exceeds u32".to_string()))?;
 
-    let rank = 
-        u32::try_from(
-            dims.len(),
-        )
-        .map_err(|_| {
-            TinyError::InvalidShape(
-                "tensor rank exceeds u32".to_string(),
-            )
-        })?;        
+    let strides_u32: Vec<u32> = strides
+        .iter()
+        .map(|&value| u32::try_from(value))
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(|_| TinyError::InvalidShape("stride exceeds u32".to_string()))?;
 
-    let numel_u32 = 
-        u32::try_from(
-            numel,
-        )
-        .map_err(|_| {
-            TinyError::InvalidShape(
-                "tensor element count exceeds u32".to_string(),
-            )
-        })?;   
-    
-    let shader_source = 
-        include_str!(
-            "../../kernels/contiguous.metal"
-        );
-    
-    let pipeline = 
-        context.pipeline(shader_source, "contiguous_f32");
-    
+    let rank = u32::try_from(dims.len())
+        .map_err(|_| TinyError::InvalidShape("tensor rank exceeds u32".to_string()))?;
+
+    let numel_u32 = u32::try_from(numel)
+        .map_err(|_| TinyError::InvalidShape("tensor element count exceeds u32".to_string()))?;
+
+    let shader_source = include_str!("../../kernels/contiguous.metal");
+
+    let pipeline = context.pipeline(shader_source, "contiguous_f32");
+
     let command_buffer = context.command_queue.new_command_buffer();
 
     let encoder = command_buffer.new_compute_command_encoder();
 
-    encoder.set_compute_pipeline_state(
-        pipeline.as_ref(),
-    );
+    encoder.set_compute_pipeline_state(pipeline.as_ref());
 
-    encoder.set_buffer(
-        0,
-        Some(source.raw()),
-        0,
-    );
+    encoder.set_buffer(0, Some(source.raw()), 0);
 
-    encoder.set_buffer(
-        1,
-        Some(result.raw()),
-        0,
-    );
+    encoder.set_buffer(1, Some(result.raw()), 0);
 
     encoder.set_bytes(
         2,
-        (dims_u32.len()
-            * mem::size_of::<u32>())
-            as u64,
-        dims_u32.as_ptr()
-            as *const c_void,
+        (dims_u32.len() * mem::size_of::<u32>()) as u64,
+        dims_u32.as_ptr() as *const c_void,
     );
 
     encoder.set_bytes(
         3,
-        (strides_u32.len()
-            * mem::size_of::<u32>())
-            as u64,
-        strides_u32.as_ptr()
-            as *const c_void,
+        (strides_u32.len() * mem::size_of::<u32>()) as u64,
+        strides_u32.as_ptr() as *const c_void,
     );
 
     encoder.set_bytes(
         4,
-        mem::size_of::<u32>()
-            as u64,
-        &rank as *const u32
-            as *const c_void,
+        mem::size_of::<u32>() as u64,
+        &rank as *const u32 as *const c_void,
     );
 
     encoder.set_bytes(
         5,
-        mem::size_of::<u32>()
-            as u64,
-        &numel_u32
-            as *const u32
-            as *const c_void,
+        mem::size_of::<u32>() as u64,
+        &numel_u32 as *const u32 as *const c_void,
     );
 
-    let grid_size =
-        MTLSize::new(
-            numel as u64,
-            1,
-            1,
-        );
+    let grid_size = MTLSize::new(numel as u64, 1, 1);
 
-    let thread_group_width =
-        numel.min(256);
+    let thread_group_width = numel.min(256);
 
-    let thread_group_size =
-        MTLSize::new(
-            thread_group_width as u64,
-            1,
-            1,
-        );
+    let thread_group_size = MTLSize::new(thread_group_width as u64, 1, 1);
 
-    encoder.dispatch_threads(
-        grid_size,
-        thread_group_size,
-    );
+    encoder.dispatch_threads(grid_size, thread_group_size);
 
-     encoder.end_encoding();
+    encoder.end_encoding();
 
     command_buffer.commit();
 
-    command_buffer
-        .wait_until_completed();
+    command_buffer.wait_until_completed();
 
     Ok(result)
 }

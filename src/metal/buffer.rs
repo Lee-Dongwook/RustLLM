@@ -1,10 +1,7 @@
 use std::ffi::c_void;
 use std::mem;
 
-use ::metal::{
-    Buffer,
-    MTLResourceOptions,
-};
+use ::metal::{Buffer, MTLResourceOptions};
 
 use super::MetalContext;
 
@@ -14,18 +11,14 @@ pub struct MetalBuffer {
 }
 
 impl MetalBuffer {
-    pub fn from_slice(
-        context: &MetalContext,
-        data: &[f32],
-    ) -> Self {
+    pub fn from_slice(context: &MetalContext, data: &[f32]) -> Self {
         assert!(
             !data.is_empty(),
             "빈 데이터로 MetalBuffer를 만들 수 없습니다."
         );
 
-        let byte_len = 
-            (data.len() * mem::size_of::<f32>()) as u64;
-        
+        let byte_len = std::mem::size_of_val(data) as u64;
+
         let raw = context.device.new_buffer_with_data(
             data.as_ptr() as *const c_void,
             byte_len,
@@ -38,21 +31,18 @@ impl MetalBuffer {
         }
     }
 
-    pub fn from_u32_slice(
-        context: &MetalContext,
-        data: &[u32],
-    ) -> Self {
+    pub fn from_u32_slice(context: &MetalContext, data: &[u32]) -> Self {
         assert!(
             !data.is_empty(),
             "빈 데이터로 MetalBuffer를 만들 수 없습니다."
         );
 
-        let byte_len = (data.len() * mem::size_of::<u32>()) as u64;
+        let byte_len = std::mem::size_of_val(data) as u64;
 
         let raw = context.device.new_buffer_with_data(
             data.as_ptr() as *const c_void,
-            byte_len, 
-            MTLResourceOptions::StorageModeShared
+            byte_len,
+            MTLResourceOptions::StorageModeShared,
         );
 
         Self {
@@ -61,31 +51,24 @@ impl MetalBuffer {
         }
     }
 
-      pub fn empty(
-        context: &MetalContext,
-        len: usize,
-    ) -> Self {
-        assert!(
-            len > 0,
-            "길이가 0인 MetalBuffer는 만들 수 없습니다."
-        );
+    pub fn empty(context: &MetalContext, len: usize) -> Self {
+        assert!(len > 0, "길이가 0인 MetalBuffer는 만들 수 없습니다.");
 
-        let byte_len =
-            (len * mem::size_of::<f32>()) as u64;
+        let byte_len = (len * mem::size_of::<f32>()) as u64;
 
-        let raw = context.device.new_buffer(
-            byte_len,
-            MTLResourceOptions::StorageModeShared,
-        );
+        let raw = context
+            .device
+            .new_buffer(byte_len, MTLResourceOptions::StorageModeShared);
 
-        Self {
-            raw,
-            len,
-        }
+        Self { raw, len }
     }
 
     pub fn len(&self) -> usize {
         self.len
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
     }
 
     pub fn raw(&self) -> &Buffer {
@@ -95,11 +78,6 @@ impl MetalBuffer {
     pub fn as_slice(&self) -> &[f32] {
         let ptr = self.raw.contents() as *const f32;
 
-        unsafe {
-            std::slice::from_raw_parts(
-                ptr,
-                self.len,
-            )
-        }
+        unsafe { std::slice::from_raw_parts(ptr, self.len) }
     }
 }

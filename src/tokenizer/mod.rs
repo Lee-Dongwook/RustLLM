@@ -9,26 +9,13 @@ pub use simple::CharTokenizer;
 pub use stream::StreamingDecoder;
 
 pub trait Tokenizer {
-    fn encode(
-        &self,
-        text: &str,
-    ) -> Result<Vec<u32>>;
+    fn encode(&self, text: &str) -> Result<Vec<u32>>;
 
-    fn decode(
-        &self,
-        token_ids: &[u32],
-        skip_special_tokens: bool,
-    ) -> Result<String>;
+    fn decode(&self, token_ids: &[u32], skip_special_tokens: bool) -> Result<String>;
 
-    fn vocab_size(
-        &self,
-    ) -> usize;
+    fn vocab_size(&self) -> usize;
 
-    fn bos_token_id(
-        &self,
-    ) -> Option<u32>;
+    fn bos_token_id(&self) -> Option<u32>;
 
-    fn eos_token_id(
-        &self,
-    ) -> Option<u32>;
+    fn eos_token_id(&self) -> Option<u32>;
 }

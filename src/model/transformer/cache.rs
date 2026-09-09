@@ -26,18 +26,22 @@ impl Transformer {
         cache: &mut KvCache,
     ) -> Result<Tensor> {
         if token_ids.is_empty() {
-            return Err(TinyError::ModelFormat("token_ids cannot be empty".to_string()));
+            return Err(TinyError::ModelFormat(
+                "token_ids cannot be empty".to_string(),
+            ));
         }
         if cache.num_layers() != self.blocks.len() {
             return Err(TinyError::ModelFormat(format!(
                 "KV cache has {} layers but model has {}",
-                cache.num_layers(), self.blocks.len(),
+                cache.num_layers(),
+                self.blocks.len(),
             )));
         }
         if cache.max_seq_len() != self.config.max_seq_len {
             return Err(TinyError::ModelFormat(format!(
                 "KV cache context length {} does not match model context length {}",
-                cache.max_seq_len(), self.config.max_seq_len,
+                cache.max_seq_len(),
+                self.config.max_seq_len,
             )));
         }
 

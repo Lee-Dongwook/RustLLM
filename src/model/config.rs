@@ -1,22 +1,11 @@
 use std::fs;
 use std::path::Path;
 
-use serde::{
-    Deserialize,
-    Serialize,
-};
+use serde::{Deserialize, Serialize};
 
-use crate::error::{
-    Result,
-    TinyError,
-};
+use crate::error::{Result, TinyError};
 
-#[derive(
-    Debug,
-    Clone,
-    Serialize,
-    Deserialize,
-)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelConfig {
     pub vocab_size: usize,
     pub hidden_size: usize,
@@ -32,174 +21,98 @@ pub struct ModelConfig {
 }
 
 impl ModelConfig {
-    pub fn validate(
-        &self,
-    ) -> Result<()> {
+    pub fn validate(&self) -> Result<()> {
         if self.vocab_size == 0 {
-            return Err(
-                TinyError::InvalidShape(
-                    "vocab size cannot be zero"
-                        .to_string(),
-                ),
-            );
+            return Err(TinyError::InvalidShape(
+                "vocab size cannot be zero".to_string(),
+            ));
         }
 
         if self.hidden_size == 0 {
-            return Err(
-                TinyError::InvalidShape(
-                    "hidden size cannot be zero"
-                        .to_string(),
-                ),
-            );
+            return Err(TinyError::InvalidShape(
+                "hidden size cannot be zero".to_string(),
+            ));
         }
 
         if self.intermediate_size == 0 {
-            return Err(
-                TinyError::InvalidShape(
-                    "intermediate size cannot be zero"
-                        .to_string(),
-                ),
-            );
+            return Err(TinyError::InvalidShape(
+                "intermediate size cannot be zero".to_string(),
+            ));
         }
 
         if self.num_layers == 0 {
-            return Err(
-                TinyError::InvalidShape(
-                    "number of layers cannot be zero"
-                        .to_string(),
-                ),
-            );
+            return Err(TinyError::InvalidShape(
+                "number of layers cannot be zero".to_string(),
+            ));
         }
 
         if self.num_heads == 0 {
-            return Err(
-                TinyError::InvalidShape(
-                    "number of attention heads cannot be zero"
-                        .to_string(),
-                ),
-            );
+            return Err(TinyError::InvalidShape(
+                "number of attention heads cannot be zero".to_string(),
+            ));
         }
 
-        if self.hidden_size
-            % self.num_heads
-            != 0
-        {
-            return Err(
-                TinyError::InvalidShape(
-                    format!(
-                        "hidden size {} must be divisible by num_heads {}",
-                        self.hidden_size,
-                        self.num_heads,
-                    ),
-                ),
-            );
+        if !self.hidden_size.is_multiple_of(self.num_heads) {
+            return Err(TinyError::InvalidShape(format!(
+                "hidden size {} must be divisible by num_heads {}",
+                self.hidden_size, self.num_heads,
+            )));
         }
 
-        let head_dim =
-            self.hidden_size
-                / self.num_heads;
+        let head_dim = self.hidden_size / self.num_heads;
 
-        if head_dim % 2 != 0 {
-            return Err(
-                TinyError::InvalidShape(
-                    format!(
-                        "RoPE requires an even head dimension, got {head_dim}"
-                    ),
-                ),
-            );
+        if !head_dim.is_multiple_of(2) {
+            return Err(TinyError::InvalidShape(format!(
+                "RoPE requires an even head dimension, got {head_dim}"
+            )));
         }
 
         if self.max_seq_len == 0 {
-            return Err(
-                TinyError::InvalidShape(
-                    "max sequence length cannot be zero"
-                        .to_string(),
-                ),
-            );
+            return Err(TinyError::InvalidShape(
+                "max sequence length cannot be zero".to_string(),
+            ));
         }
 
-        if !self.rms_norm_eps.is_finite()
-            || self.rms_norm_eps <= 0.0
-        {
-            return Err(
-                TinyError::InvalidShape(
-                    format!(
-                        "RMSNorm epsilon must be positive and finite, got {}",
-                        self.rms_norm_eps,
-                    ),
-                ),
-            );
+        if !self.rms_norm_eps.is_finite() || self.rms_norm_eps <= 0.0 {
+            return Err(TinyError::InvalidShape(format!(
+                "RMSNorm epsilon must be positive and finite, got {}",
+                self.rms_norm_eps,
+            )));
         }
 
-        if !self.rope_theta.is_finite()
-            || self.rope_theta <= 0.0
-        {
-            return Err(
-                TinyError::InvalidShape(
-                    format!(
-                        "RoPE theta must be positive and finite, got {}",
-                        self.rope_theta,
-                    ),
-                ),
-            );
+        if !self.rope_theta.is_finite() || self.rope_theta <= 0.0 {
+            return Err(TinyError::InvalidShape(format!(
+                "RoPE theta must be positive and finite, got {}",
+                self.rope_theta,
+            )));
         }
 
         Ok(())
     }
 
-    pub fn head_dim(
-        &self,
-    ) -> usize {
-        self.hidden_size
-            / self.num_heads
+    pub fn head_dim(&self) -> usize {
+        self.hidden_size / self.num_heads
     }
 
-    pub fn load_json(
-        path: impl AsRef<Path>,
-    ) -> Result<Self> {
-        let text = 
-            fs::read_to_string(
-                path,
-        )?;
+    pub fn load_json(path: impl AsRef<Path>) -> Result<Self> {
+        let text = fs::read_to_string(path)?;
 
-        let config: Self = 
-            serde_json::from_str(
-                &text,
-            )
-            .map_err(|error| {
-                TinyError::ModelFormat(
-                    format!(
-                        "invalid config.json: {error}"
-                    ),
-                )
-            })?;
-        
+        let config: Self = serde_json::from_str(&text)
+            .map_err(|error| TinyError::ModelFormat(format!("invalid config.json: {error}")))?;
+
         config.validate()?;
 
         Ok(config)
     }
 
-    pub fn save_json(
-        &self,
-        path: impl AsRef<Path>,
-    ) -> Result<()> {
+    pub fn save_json(&self, path: impl AsRef<Path>) -> Result<()> {
         self.validate()?;
 
-        let text =
-            serde_json::to_string_pretty(
-                self,
-            )
-            .map_err(|error| {
-                TinyError::ModelFormat(format!(
-                    "failed to serialize config: {error}"
-                    ),
-                )
-            })?;
-        
-        fs::write(
-            path,
-            text,
-        )?;
+        let text = serde_json::to_string_pretty(self).map_err(|error| {
+            TinyError::ModelFormat(format!("failed to serialize config: {error}"))
+        })?;
+
+        fs::write(path, text)?;
 
         Ok(())
     }
