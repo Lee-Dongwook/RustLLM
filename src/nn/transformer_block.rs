@@ -1,4 +1,8 @@
-use crate::error::Result;
+use crate::error::{
+    Result,
+    TinyError,
+};
+
 use crate::metal::MetalContext;
 use crate::tensor::Tensor;
 
@@ -22,13 +26,75 @@ impl TransformerBlock {
         attention: SelfAttention,
         mlp_norm: RmsNorm,
         mlp: Mlp,
-    ) -> Self {
-        Self {
+    ) -> Result<Self> {
+        let hidden_size =
+            attention.hidden_size();
+
+        if attention_norm.hidden_size()
+            != hidden_size
+        {
+            return Err(
+                TinyError::InvalidShape(
+                    format!(
+                        "attention RMSNorm hidden size {} does not match attention hidden size {hidden_size}",
+                        attention_norm.hidden_size(),
+                    ),
+                ),
+            );
+        }
+
+        if mlp_norm.hidden_size()
+            != hidden_size
+        {
+            return Err(
+                TinyError::InvalidShape(
+                    format!(
+                        "MLP RMSNorm hidden size {} does not match hidden size {hidden_size}",
+                        mlp_norm.hidden_size(),
+                    ),
+                ),
+            );
+        }
+
+        if mlp.input_size()
+            != hidden_size
+        {
+            return Err(
+                TinyError::InvalidShape(
+                    format!(
+                        "MLP input size {} does not match hidden size {hidden_size}",
+                        mlp.input_size(),
+                    ),
+                ),
+            );
+        }
+
+        if mlp.output_size()
+            != hidden_size
+        {
+            return Err(
+                TinyError::InvalidShape(
+                    format!(
+                        "MLP output size {} does not match hidden size {hidden_size}",
+                        mlp.output_size(),
+                    ),
+                ),
+            );
+        }
+
+        Ok(Self {
             attention_norm,
             attention,
             mlp_norm,
             mlp,
-        }
+        })
+    }
+
+    pub fn hidden_size(
+        &self,
+    ) -> usize {
+        self.attention
+            .hidden_size()
     }
 
     pub fn forward(
@@ -36,20 +102,12 @@ impl TransformerBlock {
         context: &MetalContext,
         input: &Tensor,
     ) -> Result<Tensor> {
-        // -----------------------------------------------
-        // 1. Attention pre-norm
-        // -----------------------------------------------
-
         let normalized =
             self.attention_norm
                 .forward(
                     context,
                     input,
                 )?;
-
-        // -----------------------------------------------
-        // 2. Self Attention
-        // -----------------------------------------------
 
         let attention_output =
             self.attention
@@ -58,21 +116,11 @@ impl TransformerBlock {
                     &normalized,
                 )?;
 
-        // -----------------------------------------------
-        // 3. First residual
-        //
-        // x = x + attention(norm(x))
-        // -----------------------------------------------
-
         let hidden =
             input.add(
                 context,
                 &attention_output,
             )?;
-
-        // -----------------------------------------------
-        // 4. MLP pre-norm
-        // -----------------------------------------------
 
         let normalized =
             self.mlp_norm
@@ -81,22 +129,12 @@ impl TransformerBlock {
                     &hidden,
                 )?;
 
-        // -----------------------------------------------
-        // 5. MLP
-        // -----------------------------------------------
-
         let mlp_output =
             self.mlp
                 .forward(
                     context,
                     &normalized,
                 )?;
-
-        // -----------------------------------------------
-        // 6. Second residual
-        //
-        // y = hidden + mlp(norm(hidden))
-        // -----------------------------------------------
 
         hidden.add(
             context,

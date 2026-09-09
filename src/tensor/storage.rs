@@ -1,7 +1,4 @@
-use crate::error::{
-    Result,
-    TinyError,
-};
+use crate::error::Result;
 
 use crate::metal::MetalBuffer;
 

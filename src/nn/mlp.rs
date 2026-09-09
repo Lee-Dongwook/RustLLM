@@ -63,6 +63,27 @@ impl Mlp {
         })
     }
 
+    pub fn input_size(
+    &self,
+) -> usize {
+    self.gate_proj
+        .in_features()
+}
+
+pub fn intermediate_size(
+    &self,
+) -> usize {
+    self.gate_proj
+        .out_features()
+}
+
+pub fn output_size(
+    &self,
+) -> usize {
+    self.down_proj
+        .out_features()
+}
+
     pub fn forward(
         &self,
         context: &MetalContext,

@@ -1,5 +1,6 @@
 mod error;
 mod metal;
+mod model;
 mod nn;
 mod ops;
 mod tensor;
@@ -7,7 +8,13 @@ mod tensor;
 use error::Result;
 use metal::MetalContext;
 
+use model::{
+    ModelConfig,
+    Transformer,
+};
+
 use nn::{
+    Embedding,
     Linear,
     Mlp,
     RmsNorm,
@@ -22,11 +29,54 @@ fn main() -> Result<()> {
     let context =
         MetalContext::new();
 
-    // --------------------------------------------------
-    // 공통 Identity 4x4
-    // --------------------------------------------------
+    let config =
+        ModelConfig {
+            vocab_size: 4,
+            hidden_size: 4,
+            intermediate_size: 8,
 
-    let identity_data = [
+            num_layers: 1,
+            num_heads: 2,
+
+            max_seq_len: 128,
+
+            rms_norm_eps: 1e-5,
+            rope_theta: 10_000.0,
+        };
+
+    // -----------------------------------------------
+    // Embedding
+    // -----------------------------------------------
+
+    let embedding_weight =
+        Tensor::from_f32_slice(
+            &context,
+            &[
+                // token 0
+                1.0, 1.0, 1.0, 1.0,
+
+                // token 1
+                1.0, 0.0, 0.0, 0.0,
+
+                // token 2
+                0.0, 1.0, 0.0, 0.0,
+
+                // token 3
+                0.0, 0.0, 1.0, 0.0,
+            ],
+            &[4, 4],
+        )?;
+
+    let embedding =
+        Embedding::new(
+            embedding_weight,
+        )?;
+
+    // -----------------------------------------------
+    // Identity projection
+    // -----------------------------------------------
+
+    let identity = [
         1.0, 0.0, 0.0, 0.0,
         0.0, 1.0, 0.0, 0.0,
         0.0, 0.0, 1.0, 0.0,
@@ -37,7 +87,7 @@ fn main() -> Result<()> {
         Linear::new(
             Tensor::from_f32_slice(
                 &context,
-                &identity_data,
+                &identity,
                 &[4, 4],
             )?,
         )?;
@@ -46,7 +96,7 @@ fn main() -> Result<()> {
         Linear::new(
             Tensor::from_f32_slice(
                 &context,
-                &identity_data,
+                &identity,
                 &[4, 4],
             )?,
         )?;
@@ -55,7 +105,7 @@ fn main() -> Result<()> {
         Linear::new(
             Tensor::from_f32_slice(
                 &context,
-                &identity_data,
+                &identity,
                 &[4, 4],
             )?,
         )?;
@@ -64,7 +114,7 @@ fn main() -> Result<()> {
         Linear::new(
             Tensor::from_f32_slice(
                 &context,
-                &identity_data,
+                &identity,
                 &[4, 4],
             )?,
         )?;
@@ -72,9 +122,9 @@ fn main() -> Result<()> {
     let rope =
         RotaryEmbedding::new(
             &context,
-            2,
-            128,
-            10_000.0,
+            config.head_dim(),
+            config.max_seq_len,
+            config.rope_theta,
         )?;
 
     let attention =
@@ -84,12 +134,12 @@ fn main() -> Result<()> {
             v_proj,
             out_proj,
             rope,
-            2,
+            config.num_heads,
         )?;
 
-    // --------------------------------------------------
-    // RMSNorm weights
-    // --------------------------------------------------
+    // -----------------------------------------------
+    // Block RMSNorm
+    // -----------------------------------------------
 
     let attention_norm =
         RmsNorm::new(
@@ -98,7 +148,7 @@ fn main() -> Result<()> {
                 &[1.0, 1.0, 1.0, 1.0],
                 &[4],
             )?,
-            1e-5,
+            config.rms_norm_eps,
         )?;
 
     let mlp_norm =
@@ -108,46 +158,30 @@ fn main() -> Result<()> {
                 &[1.0, 1.0, 1.0, 1.0],
                 &[4],
             )?,
-            1e-5,
+            config.rms_norm_eps,
         )?;
 
-    // --------------------------------------------------
-    // MLP는 출력이 무조건 0이 되도록
-    // 모든 weight를 0으로 둔다.
-    //
-    // hidden = 4
-    // intermediate = 8
-    // --------------------------------------------------
-
-    let gate_proj =
-        Linear::new(
-            Tensor::zeros(
-                &context,
-                &[4, 8],
-            )?,
-        )?;
-
-    let up_proj =
-        Linear::new(
-            Tensor::zeros(
-                &context,
-                &[4, 8],
-            )?,
-        )?;
-
-    let down_proj =
-        Linear::new(
-            Tensor::zeros(
-                &context,
-                &[8, 4],
-            )?,
-        )?;
-
+    // 테스트에서는 MLP = 0
     let mlp =
         Mlp::new(
-            gate_proj,
-            up_proj,
-            down_proj,
+            Linear::new(
+                Tensor::zeros(
+                    &context,
+                    &[4, 8],
+                )?,
+            )?,
+            Linear::new(
+                Tensor::zeros(
+                    &context,
+                    &[4, 8],
+                )?,
+            )?,
+            Linear::new(
+                Tensor::zeros(
+                    &context,
+                    &[8, 4],
+                )?,
+            )?,
         )?;
 
     let block =
@@ -156,49 +190,77 @@ fn main() -> Result<()> {
             attention,
             mlp_norm,
             mlp,
-        );
+        )?;
 
-    // --------------------------------------------------
-    // sequence = 1
-    // hidden = 4
-    // --------------------------------------------------
+    // -----------------------------------------------
+    // Final RMSNorm
+    // -----------------------------------------------
 
-    let input =
-        Tensor::from_f32_slice(
-            &context,
-            &[
-                1.0,
-                2.0,
-                3.0,
-                4.0,
+    let final_norm =
+        RmsNorm::new(
+            Tensor::from_f32_slice(
+                &context,
+                &[1.0, 1.0, 1.0, 1.0],
+                &[4],
+            )?,
+            config.rms_norm_eps,
+        )?;
+
+    // -----------------------------------------------
+    // LM Head
+    //
+    // hidden=4 → vocab=4
+    //
+    // 테스트에서는 identity
+    // -----------------------------------------------
+
+    let lm_head =
+        Linear::new(
+            Tensor::from_f32_slice(
+                &context,
+                &identity,
+                &[4, 4],
+            )?,
+        )?;
+
+    // -----------------------------------------------
+    // Full Transformer
+    // -----------------------------------------------
+
+    let model =
+        Transformer::new(
+            config,
+            embedding,
+            vec![
+                block,
             ],
-            &[1, 4],
+            final_norm,
+            lm_head,
         )?;
 
-    let output =
-        block.forward(
+    // token 0
+    let tokens =
+        [0u32];
+
+    let logits =
+        model.forward(
             &context,
-            &input,
+            &tokens,
         )?;
 
     println!(
-        "input shape  = {:?}",
-        input.shape().dims(),
+        "tokens       = {:?}",
+        tokens,
     );
 
     println!(
-        "output shape = {:?}",
-        output.shape().dims(),
+        "logits shape = {:?}",
+        logits.shape().dims(),
     );
 
     println!(
-        "input  = {:?}",
-        input.as_f32_slice()?,
-    );
-
-    println!(
-        "output = {:?}",
-        output.as_f32_slice()?,
+        "logits       = {:?}",
+        logits.as_f32_slice()?,
     );
 
     Ok(())
