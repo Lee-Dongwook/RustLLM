@@ -17,6 +17,12 @@ pub struct SafeTensorInfo {
     pub numel: usize,
 }
 
+#[derive(Debug)]
+pub struct ImportedSafetensors {
+    pub weights: ModelWeights,
+    pub source_tensors: Vec<SafeTensorInfo>,
+}
+
 impl SafeTensorInfo {
     pub fn rank(&self) -> usize {
         self.shape.len()
@@ -53,12 +59,17 @@ pub fn inspect_safetensors(path: impl AsRef<Path>) -> Result<Vec<SafeTensorInfo>
 }
 
 pub fn import_safetensors(path: impl AsRef<Path>) -> Result<ModelWeights> {
+    Ok(import_safetensors_with_metadata(path)?.weights)
+}
+
+pub fn import_safetensors_with_metadata(path: impl AsRef<Path>) -> Result<ImportedSafetensors> {
     let bytes = fs::read(path)?;
 
     let tensors = SafeTensors::deserialize(&bytes)
         .map_err(|error| TinyError::ModelFormat(format!("failed to parse safetensors: {error}")))?;
 
     let mut weights = ModelWeights::new();
+    let mut source_tensors = Vec::with_capacity(tensors.len());
 
     for (name, tensor) in tensors.iter() {
         let shape = tensor.shape().to_vec();
@@ -87,9 +98,18 @@ pub fn import_safetensors(path: impl AsRef<Path>) -> Result<ModelWeights> {
         }
 
         weights.insert_f32(name.to_string(), &shape, data)?;
+        source_tensors.push(SafeTensorInfo {
+            name: name.to_string(),
+            dtype: tensor.dtype(),
+            shape,
+            numel: expected,
+        });
     }
-
-    Ok(weights)
+    source_tensors.sort_by(|left, right| left.name.cmp(&right.name));
+    Ok(ImportedSafetensors {
+        weights,
+        source_tensors,
+    })
 }
 
 fn decode_to_f32(name: &str, dtype: Dtype, bytes: &[u8]) -> Result<Vec<f32>> {

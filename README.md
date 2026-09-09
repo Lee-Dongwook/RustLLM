@@ -6,10 +6,10 @@ Apple Metal GPU에서 소형 Transformer 언어 모델의 **추론 과정**을 �
 
 ## 현재 구현된 기능
 
-- Metal 기반 `f32` 텐서 저장소와 shape/stride 관리
+- Metal 기반 F32/F16 텐서 저장소와 shape/stride 관리
 - Metal 셰이더 기반 연산
   - 덧셈, 원소별 곱셈, SiLU, RMSNorm, Softmax
-  - 행렬 곱셈(naive 및 tile 8/16/32 구현)
+  - F32 행렬 곱셈과 F16 입력/F32 누산/F16 출력 MatMul MVP
   - batched matrix multiplication, embedding lookup, contiguous materialization
   - attention scale/mask 및 RoPE(Rotary Position Embedding)
 - Decoder-only Transformer 추론
@@ -17,7 +17,7 @@ Apple Metal GPU에서 소형 Transformer 언어 모델의 **추론 과정**을 �
   - SwiGLU MLP, residual connection, LM head
 - `config.json`과 커스텀 바이너리 `model.bin` 가중치 포맷 로딩 및 shape 검증
 - Llama `tokenizer.model` 기반 SentencePiece encode/decode
-- argmax를 사용하는 greedy autoregressive generation 및 EOS 종료 처리
+- greedy 및 temperature/top-k/top-p seeded autoregressive generation, EOS 종료 처리
 - 레이어별 Key/Value cache를 이용한 토큰 단위 디코딩
 - import 시 원본 SentencePiece 파일을 변환 모델 폴더에 함께 복사
 
@@ -171,8 +171,9 @@ cargo run -- run --model models/tinystories-llama-15m --prompt "Once upon a time
 
 - 학습(training), fine-tuning, 모델 다운로드 기능은 포함하지 않습니다.
 - 생성은 greedy decoding만 지원하며 temperature, top-k/top-p sampling은 없습니다.
-- 현재 KV cache는 이전 Key/Value를 매 단계 새 Metal buffer로 이어 붙입니다. 더 긴 문맥에서의 메모리 복사 비용을 줄이려면, 다음 단계에서 고정 크기 사전 할당 cache로 개선할 수 있습니다.
-- `f16` 추론, 배치 추론, 자동화된 단위/통합 테스트는 다음 단계의 개선 항목입니다.
+- KV cache는 레이어별 고정 크기 버퍼에 K/V를 기록합니다. Attention의 F16 전환은 아직 지원하지 않습니다.
+- FP16 지원은 Tensor/storage와 rank-2 MatMul까지입니다. 전체 Transformer inference는 아직 F32입니다.
+- 배치 추론, FP16 RMSNorm/Softmax/RoPE, 자동화된 GPU 통합 테스트는 다음 단계의 개선 항목입니다.
 
 ## 기술 스택
 
