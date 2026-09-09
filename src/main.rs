@@ -8,109 +8,156 @@ mod ops;
 mod tensor;
 mod tokenizer;
 
-use std::{
-    env,
-    fs,
-    path::{
-        Path,
-        PathBuf,
-    },
-};
+use error::Result;
+use metal::MetalContext;
+use model::Transformer;
 
-use error::{Result, TinyError};
+use crate::error::TinyError;
 
-use import::{import_safetensors, load_llama_config, map_llama_weights};
+fn main() -> Result<()> {
+    let context =
+        MetalContext::new();
 
-const DEFAULT_SOURCE_DIR: &str = "models/source/tinystories-llama-15m";
+    println!(
+        "loading real model..."
+    );
 
-const DEFAULT_OUTPUT_DIR: &str = "models/tinystories-llama-15m";
+    let model =
+        Transformer::load(
+            &context,
+            "models/tinystories-llama-15m",
+        )?;
 
-fn main() {
-    if let Err(error) = run() {
-        eprintln!(
-            "error: {error}",
+    println!(
+        "model loaded successfully"
+    );
+
+    println!(
+        "vocab_size  = {}",
+        model.config().vocab_size,
+    );
+
+    println!(
+        "hidden_size = {}",
+        model.config().hidden_size,
+    );
+
+    println!(
+        "num_layers  = {}",
+        model.config().num_layers,
+    );
+
+    println!(
+        "num_heads   = {}",
+        model.config().num_heads,
+    );
+
+    println!(
+        "head_dim    = {}",
+        model.config().head_dim(),
+    );
+
+    let token_ids =
+        vec![
+            1u32,
+            42u32,
+        ];
+
+    println!(
+        "running forward with token ids = {:?}",
+        token_ids,
+    );
+
+    let logits =
+        model.forward(
+            &context,
+            &token_ids,
+        )?;
+
+    println!("forward completed");
+
+    println!(
+        "logits shape = {:?}",
+        logits.shape().dims(),
+    );
+
+    let values =
+        logits.as_f32_slice()?;
+
+    let vocab_size =
+        model.config().vocab_size;
+
+    println!(
+        "logic count = {}",
+        values.len(),
+    );
+
+    let non_finite_count = 
+        values.iter().filter(|value| !value.is_finite()).count();
+
+    println!(
+        "non-finite logits = {}",
+        non_finite_count,
+    );
+
+    let min_logit = values.iter().copied().fold(f32::INFINITY, f32::min);
+    let max_logit = values.iter().copied().fold(f32::NEG_INFINITY, f32::max,);
+
+    println!(
+        "logit range = [{min_logit}, {max_logit}]",
+    );
+
+    let last_token_logits = &values[values.len() - vocab_size..];
+
+    let (next_token_id, next_token_logit) = last_token_logits
+        .iter()
+        .copied()
+        .enumerate()
+        .max_by(
+            |left, right| {
+                left.1.total_cmp(
+                    &right.1,
+                )
+            },
+        )
+        .ok_or_else(|| {
+            TinyError::Sampling(
+                "empty logits".to_string(),
+            )
+        })?;
+
+        println!(
+            "argmax token = {}",
+            next_token_id,
         );
-        std::process::exit(1);
-    }
-}
+        
+        println!(
+            "argmax logit = {}",
+            next_token_logit,
+        );
 
-fn run() -> Result<()> {
-    let (source_dir, output_dir) = parse_paths()?;
+        let mut top_logits:
+            Vec<(usize, f32)> =
+            last_token_logits
+                .iter()
+                .copied()
+                .enumerate()
+                .collect();
 
-    ensure_distinct_directories(
-        &source_dir,
-        &output_dir,
-    )?;
+        top_logits.sort_by(
+            |left, right| {
+                right.1
+                    .total_cmp(
+                        &left.1,
+                    )
+            },
+        );
 
-    let config = load_llama_config(source_dir.join("config.json"))?;
+        println!("top 5 logits:");
 
-    let source = import_safetensors(source_dir.join("model.safetensors"))?;
-
-    println!("source tensors = {}", source.len(),);
-
-    let converted = map_llama_weights(source, config.num_layers)?;
-
-    println!("converted tensors = {}", converted.len(),);
-
-    fs::create_dir_all(&output_dir)?;
-
-    config.save_json(output_dir.join("config.json"))?;
-
-    converted.save(output_dir.join("model.bin"))?;
-
-    let saved = model::ModelWeights::load(output_dir.join("model.bin"))?;
-
-    if saved.len() != converted.len() {
-        return Err(TinyError::ModelFormat(format!(
-            "saved tensor count {} does not match converted count {}",
-            saved.len(),
-            converted.len(),
-        )));
-    }
-
-    println!("saved converted model to {}", output_dir.display(),);
-
-    println!("verified {} tensors", saved.len(),);
-
-    Ok(())
-}
-
-fn parse_paths() -> Result<(PathBuf, PathBuf)> {
-    let args: Vec<String> = env::args().skip(1).collect();
-
-    match args.as_slice() {
-        [] => Ok((
-            PathBuf::from(DEFAULT_SOURCE_DIR),
-            PathBuf::from(DEFAULT_OUTPUT_DIR),
-        )),
-
-        [source_dir, output_dir] => Ok((PathBuf::from(source_dir), PathBuf::from(output_dir))),
-
-        _ => Err(TinyError::InvalidArgument(
-            "usage: cargo run -- [<source-model-dir> <output-model-dir>]".to_string(),
-        )),
-    }
-}
-
-fn ensure_distinct_directories(
-    source_dir: &Path,
-    output_dir: &Path,
-) -> Result<()> {
-    if source_dir == output_dir {
-        return Err(TinyError::InvalidArgument(
-            "source and output model directories must be different"
-                .to_string(),
-        ));
-    }
-
-    if output_dir.exists()
-        && source_dir.canonicalize()? == output_dir.canonicalize()?
-    {
-        return Err(TinyError::InvalidArgument(
-            "source and output model directories resolve to the same directory"
-                .to_string(),
-        ));
-    }
-
+        for(token_id, logit,) in top_logits.iter().take(5) {
+            println!("token {:5} => {}", token_id, logit,);
+        }
+        
     Ok(())
 }

@@ -9,5 +9,4 @@ pub use safetensors::{
 
 pub use llama::{
     load_llama_config,
-    map_llama_weights,
 };
