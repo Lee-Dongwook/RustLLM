@@ -41,6 +41,8 @@ pub struct RunArgs {
     pub top_p: f32,
     #[arg(long, default_value_t = 42)]
     pub seed: u64,
+    #[arg(long, default_value_t = false)]
+    pub metrics: bool,
 }
 
 #[derive(Debug, Args)]

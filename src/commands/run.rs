@@ -69,7 +69,7 @@ pub fn execute(args: RunArgs) -> Result<()> {
         seed: args.seed,
     };
     generation_config.validate()?;
-    generate_stream(
+    let output = generate_stream(
         &context,
         &model,
         &prompt_tokens,
@@ -93,6 +93,37 @@ pub fn execute(args: RunArgs) -> Result<()> {
     println!();
 
     eprintln!("generated tokens: {}", generated_count,);
+
+    if args.metrics {
+        let metrics = &output.metrics;
+        eprintln!("\nGeneration metrics");
+        eprintln!("  prompt tokens       : {}", metrics.prompt_tokens);
+        eprintln!("  generated tokens    : {}", metrics.generated_tokens);
+        eprintln!(
+            "  prefill             : {:.2} ms",
+            metrics.prefill_duration.as_secs_f64() * 1_000.0
+        );
+        eprintln!(
+            "  prefill speed       : {:.2} tok/s",
+            metrics.prefill_tokens_per_second()
+        );
+        eprintln!(
+            "  decode forward      : {:.2} ms",
+            metrics.decode_forward_duration.as_secs_f64() * 1_000.0
+        );
+        eprintln!(
+            "  decode speed        : {:.2} tok/s",
+            metrics.decode_tokens_per_second()
+        );
+        eprintln!(
+            "  generation speed    : {:.2} tok/s",
+            metrics.generation_tokens_per_second()
+        );
+        eprintln!(
+            "  total               : {:.2} ms",
+            metrics.total_duration.as_secs_f64() * 1_000.0
+        );
+    }
 
     Ok(())
 }

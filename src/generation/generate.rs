@@ -3,8 +3,9 @@ use crate::{
     metal::MetalContext,
     model::Transformer,
 };
+use std::time::{Duration, Instant};
 
-use super::{GenerationConfig, Sampler, greedy_next_token};
+use super::{GenerationConfig, GenerationMetrics, GenerationOutput, Sampler, greedy_next_token};
 
 pub fn generate_stream<F>(
     context: &MetalContext,
@@ -13,7 +14,7 @@ pub fn generate_stream<F>(
     config: &GenerationConfig,
     eos_token_id: Option<u32>,
     mut on_token: F,
-) -> Result<Vec<u32>>
+) -> Result<GenerationOutput>
 where
     F: FnMut(u32) -> Result<()>,
 {
@@ -25,19 +26,48 @@ where
         ));
     }
     let max_seq_len = model.config().max_seq_len;
+    if prompt_tokens.len() >= max_seq_len {
+        return Err(TinyError::PositionOutOfRange {
+            start_pos: 0,
+            seq_len: prompt_tokens.len(),
+            max_seq_len,
+        });
+    }
+    let total_started = Instant::now();
     let mut tokens = prompt_tokens.to_vec();
     let mut cache = model.new_kv_cache(context)?;
+    let prefill_started = Instant::now();
     let mut logits = model.forward_with_cache(context, prompt_tokens, &mut cache)?;
+    let prefill_duration = prefill_started.elapsed();
+    let generation_started = Instant::now();
+    let mut generated_tokens = 0;
+    let mut decode_forward_calls = 0;
+    let mut decode_forward_duration = Duration::ZERO;
     for _ in 0..config.max_new_tokens {
         let next = sampler.sample(&logits, config)?;
         tokens.push(next);
+        generated_tokens += 1;
         on_token(next)?;
         if eos_token_id == Some(next) || tokens.len() >= max_seq_len {
             break;
         }
+        let decode_started = Instant::now();
         logits = model.forward_with_cache(context, &[next], &mut cache)?;
+        decode_forward_duration += decode_started.elapsed();
+        decode_forward_calls += 1;
     }
-    Ok(tokens)
+    Ok(GenerationOutput {
+        token_ids: tokens,
+        metrics: GenerationMetrics {
+            prompt_tokens: prompt_tokens.len(),
+            generated_tokens,
+            prefill_duration,
+            decode_forward_duration,
+            decode_forward_calls,
+            generation_duration: generation_started.elapsed(),
+            total_duration: total_started.elapsed(),
+        },
+    })
 }
 
 pub fn generate_greedy_stream<F>(
