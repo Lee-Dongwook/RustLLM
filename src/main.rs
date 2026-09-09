@@ -1,4 +1,5 @@
 mod error;
+mod generation;
 mod metal;
 mod model;
 mod nn;
@@ -12,6 +13,8 @@ use model::{
     ModelConfig,
     Transformer,
 };
+
+use generation::generate_greedy;
 
 use nn::{
     Embedding,
@@ -248,6 +251,15 @@ fn main() -> Result<()> {
             &tokens,
         )?;
 
+    let generated = 
+        generate_greedy(
+            &context, 
+            &model, 
+            &[0u32], 
+            5, 
+            None
+    )?;
+
     println!(
         "tokens       = {:?}",
         tokens,
@@ -261,6 +273,11 @@ fn main() -> Result<()> {
     println!(
         "logits       = {:?}",
         logits.as_f32_slice()?,
+    );
+
+    println!(
+        "generated = {:?}",
+        generated,
     );
 
     Ok(())

@@ -21,6 +21,8 @@ pub enum TinyError {
         seq_len: usize,
         max_seq_len: usize,
     },
+
+    Sampling(String),
     Metal(String),
 }
 
@@ -94,6 +96,13 @@ impl fmt::Display for TinyError {
                     f,
                     "position range [{start_pos}, {}) exceeds max sequence length {max_seq_len}",
                     start_pos + seq_len,
+                )
+            }
+
+            TinyError::Sampling(message) => {
+                write!(
+                    f,
+                    "sampling error: {message}"
                 )
             }
         }
