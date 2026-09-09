@@ -7,4 +7,7 @@ pub use safetensors::{
     SafeTensorInfo,
 };
 
-pub use llama::map_llama_weights;
+pub use llama::{
+    load_llama_config,
+    map_llama_weights,
+};

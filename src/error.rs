@@ -2,6 +2,7 @@ use std::fmt;
 
 #[derive(Debug)]
 pub enum TinyError {
+    InvalidArgument(String),
     InvalidShape(String),
     ShapeMismatch {
         left: Vec<usize>,
@@ -41,6 +42,13 @@ impl fmt::Display for TinyError {
         f: &mut fmt::Formatter<'_>,
     ) -> fmt::Result {
         match self {
+            TinyError::InvalidArgument(message) => {
+                write!(
+                    f,
+                    "invalid argument: {message}"
+                )
+            }
+
             TinyError::InvalidShape(message) => {
                 write!(
                     f,
