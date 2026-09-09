@@ -38,6 +38,29 @@ impl MetalBuffer {
         }
     }
 
+    pub fn from_u32_slice(
+        context: &MetalContext,
+        data: &[u32],
+    ) -> Self {
+        assert!(
+            !data.is_empty(),
+            "빈 데이터로 MetalBuffer를 만들 수 없습니다."
+        );
+
+        let byte_len = (data.len() * mem::size_of::<u32>()) as u64;
+
+        let raw = context.device.new_buffer_with_data(
+            data.as_ptr() as *const c_void,
+            byte_len, 
+            MTLResourceOptions::StorageModeShared
+        );
+
+        Self {
+            raw,
+            len: data.len(),
+        }
+    }
+
       pub fn empty(
         context: &MetalContext,
         len: usize,

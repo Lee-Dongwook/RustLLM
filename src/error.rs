@@ -8,6 +8,12 @@ pub enum TinyError {
         right: Vec<usize>,
     },
     InvalidDimension(String),
+
+    InvalidTokenId {
+        token_id: u32,
+        vocab_size: usize,
+    },
+
     UnsupportedDType(String),
     NonContiguousTensor(String),
     Metal(String),
@@ -61,6 +67,16 @@ impl fmt::Display for TinyError {
                 write!(
                     f,
                     "non-contiguous tensor: {message}"
+                )
+            }
+
+            TinyError::InvalidTokenId {
+                token_id,
+                vocab_size,
+            } => {
+                write!(
+                    f,
+                    "invalid token id {token_id}: vocabulary size is {vocab_size}"
                 )
             }
         }

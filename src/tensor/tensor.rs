@@ -390,6 +390,44 @@ impl Tensor {
             .metal_buffer()
     }
 
+    pub(crate) fn from_metal_buffer(
+        buffer: MetalBuffer,
+        dims: &[usize],
+        dtype: DType,
+    ) -> Result<Self> {
+        let shape = Shape::new(dims)?;
+
+        if buffer.len()
+            != shape.numel()
+        {
+            return Err(
+                TinyError::InvalidShape(
+                    format!(
+                        "buffer has {} elements, but shape {:?} requires {}",
+                        buffer.len(),
+                        shape.dims(),
+                        shape.numel(),
+                    ),
+                ),
+            );
+        }
+
+        let strides = Strides::contiguous(&shape,);
+
+        Ok(Self {
+        storage:
+            Arc::new(
+                Storage::Metal(
+                    buffer,
+                ),
+            ),
+
+        shape,
+        strides,
+        dtype,
+        })
+    }
+
     pub fn matmul(
         &self,
         context: &MetalContext,
