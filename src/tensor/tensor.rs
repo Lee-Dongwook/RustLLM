@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use crate::ops::materialize_contiguous_f32;
 
 use crate::error::{
     Result,
@@ -18,6 +19,7 @@ use super::{
     Strides,
 };
 
+#[derive(Clone)]
 pub struct Tensor {
     storage: Arc<Storage>,
     shape: Shape,
@@ -63,6 +65,125 @@ impl Tensor {
             shape,
             strides,
             dtype: DType::F32,
+        })
+    }
+
+    pub fn contiguous(
+        &self,
+        context: &MetalContext
+    ) -> Result<Self> {
+        if self.is_contiguous() {
+            return Ok(
+                self.clone()
+            );
+        }
+
+        if self.dtype != DType::F32 {
+            return Err(
+                TinyError::UnsupportedDType(
+                format!(
+                    "{:?}",
+                    self.dtype,
+                    ),
+                ),
+            );
+        }
+
+        let buffer = materialize_contiguous_f32(
+            context, 
+            self.metal_buffer()?, 
+            self.shape.dims(), 
+            self.strides.values(),
+        )?;
+
+        let shape = self.shape.clone();
+
+        let strides = Strides::contiguous(&shape,);
+
+        Ok(Self {
+            storage:
+                Arc::new(
+                    Storage::Metal(
+                        buffer,
+                    ),
+                ),
+            shape,
+            strides,
+            dtype:
+                self.dtype,
+        })
+    }
+
+    pub fn transpose(
+        &self,
+        dim_a: usize,
+        dim_b: usize,
+    ) -> Result<Self> {
+        let rank = self.rank();
+
+       if dim_a >= rank {
+         return Err(
+            TinyError::InvalidDimension(
+                format!(
+                    "dimension {dim_a} does not exist for rank {rank}"
+                ),
+            ),
+          );
+        }
+
+        if dim_b >= rank {
+          return Err(
+            TinyError::InvalidDimension(
+                format!(
+                    "dimension {dim_b} does not exist for rank {rank}"
+                ),
+            ),
+          );
+        }
+
+        if dim_a == dim_b {
+            return Ok(
+                self.clone()
+            )
+        }
+
+        let mut dims = 
+            self.shape
+                .dims()
+                .to_vec();
+
+        dims.swap(
+            dim_a,
+            dim_b,
+        );
+
+        let mut strides = 
+            self.strides
+                .values()
+                .to_vec();
+        
+        strides.swap(
+            dim_a,
+            dim_b,
+        );
+
+        Ok(Self {
+            storage: Arc::clone(
+                &self.storage,
+            ),
+
+            shape: 
+                Shape::new(
+                    &dims,
+                )?,
+            
+            strides:
+                Strides::from_values(
+                    strides,
+                ),
+            
+            dtype:
+                self.dtype,
         })
     }
 
@@ -197,6 +318,16 @@ impl Tensor {
                         self.dtype,
                     ),
                 ),
+            );
+        }
+
+        if !self.is_contiguous() {
+            return Err(
+                TinyError::NonContiguousTensor(format!(
+                    "shape={:?}, strides={:?}",
+                    self.shape.dims(),
+                    self.strides.values()
+                ),),
             );
         }
 

@@ -9,6 +9,7 @@ pub enum TinyError {
     },
     InvalidDimension(String),
     UnsupportedDType(String),
+    NonContiguousTensor(String),
     Metal(String),
 }
 
@@ -53,6 +54,13 @@ impl fmt::Display for TinyError {
                 write!(
                     f,
                     "metal error: {message}"
+                )
+            }
+
+            TinyError::NonContiguousTensor(message) => {
+                write!(
+                    f,
+                    "non-contiguous tensor: {message}"
                 )
             }
         }

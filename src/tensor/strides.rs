@@ -31,6 +31,14 @@ impl Strides {
         }
     }
 
+    pub(crate) fn from_values(
+        values: Vec<usize>
+    ) -> Self {
+        Self {
+            values,
+        }
+    }
+
     pub fn values(
         &self,
     ) -> &[usize] {

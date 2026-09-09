@@ -11,7 +11,7 @@ fn main() -> Result<()> {
     let context =
         MetalContext::new();
 
-    let a =
+    let x =
         Tensor::from_f32_slice(
             &context,
             &[
@@ -21,94 +21,84 @@ fn main() -> Result<()> {
             &[2, 3],
         )?;
 
-    println!("--- A ---");
+    println!(
+        "--- Original ---"
+    );
 
     println!(
         "shape       = {:?}",
-        a.shape().dims(),
+        x.shape().dims(),
     );
 
     println!(
         "strides     = {:?}",
-        a.strides().values(),
-    );
-
-    println!(
-        "rank        = {}",
-        a.rank(),
-    );
-
-    println!(
-        "numel       = {}",
-        a.numel(),
-    );
-
-    println!(
-        "dim(0)      = {}",
-        a.dim(0)?,
-    );
-
-    println!(
-        "dim(1)      = {}",
-        a.dim(1)?,
+        x.strides().values(),
     );
 
     println!(
         "contiguous  = {}",
-        a.is_contiguous(),
+        x.is_contiguous(),
     );
 
     println!(
         "data        = {:?}",
-        a.as_f32_slice()?,
+        x.as_f32_slice()?,
     );
 
-    let b =
-        a.reshape(&[
-            3,
-            2,
-        ])?;
-
-    println!();
-    println!("--- B = reshape(A) ---");
-
-    println!(
-        "shape       = {:?}",
-        b.shape().dims(),
-    );
-
-    println!(
-        "strides     = {:?}",
-        b.strides().values(),
-    );
-
-    println!(
-        "contiguous  = {}",
-        b.is_contiguous(),
-    );
-
-    println!(
-        "data        = {:?}",
-        b.as_f32_slice()?,
-    );
-
-    let zero =
-        Tensor::zeros(
-            &context,
-            &[2, 2],
+    let xt =
+        x.transpose(
+            0,
+            1,
         )?;
 
     println!();
-    println!("--- Zeros ---");
+    println!(
+        "--- Transpose View ---"
+    );
 
     println!(
         "shape       = {:?}",
-        zero.shape().dims(),
+        xt.shape().dims(),
+    );
+
+    println!(
+        "strides     = {:?}",
+        xt.strides().values(),
+    );
+
+    println!(
+        "contiguous  = {}",
+        xt.is_contiguous(),
+    );
+
+    let xt =
+        xt.contiguous(
+            &context,
+        )?;
+
+    println!();
+    println!(
+        "--- Materialized ---"
+    );
+
+    println!(
+        "shape       = {:?}",
+        xt.shape().dims(),
+    );
+
+    println!(
+        "strides     = {:?}",
+        xt.strides().values(),
+    );
+
+    println!(
+        "contiguous  = {}",
+        xt.is_contiguous(),
     );
 
     println!(
         "data        = {:?}",
-        zero.as_f32_slice()?,
+        xt.as_f32_slice()?,
     );
 
     Ok(())
