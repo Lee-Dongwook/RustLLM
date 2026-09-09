@@ -1,10 +1,12 @@
 mod sentence_piece;
 mod simple;
+mod stream;
 
 use crate::error::Result;
 
 pub use sentence_piece::SentencePieceTokenizer;
 pub use simple::CharTokenizer;
+pub use stream::StreamingDecoder;
 
 pub trait Tokenizer {
     fn encode(

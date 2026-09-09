@@ -1,20 +1,22 @@
-use crate::error::{
-    Result,
-    TinyError,
+use crate::{
+    error::{
+        Result,
+        TinyError,
+    },
+    metal::MetalContext,
+    model::Transformer,
 };
-
-use crate::metal::MetalContext;
-use crate::model::Transformer;
 
 use super::greedy_next_token;
 
-pub fn generate_greedy(
+pub fn generate_greedy_stream<F>(
     context: &MetalContext,
     model: &Transformer,
     prompt_tokens: &[u32],
     max_new_tokens: usize,
     eos_token_id: Option<u32>,
-) -> Result<Vec<u32>> {
+    mut on_token: F,
+) -> Result<Vec<u32>> where F: FnMut(u32) -> Result<()> {
     if prompt_tokens.is_empty() {
         return Err(
             TinyError::InvalidShape(
@@ -55,6 +57,10 @@ pub fn generate_greedy(
             next_token,
         );
 
+        on_token(
+            next_token,
+        )?;
+
         if eos_token_id
             == Some(next_token)
         {
@@ -69,4 +75,21 @@ pub fn generate_greedy(
     }
 
     Ok(tokens)
+}
+
+pub fn generate_greedy(
+    context: &MetalContext,
+    model: &Transformer,
+    prompt_tokens: &[u32],
+    max_new_tokens: usize,
+    eos_token_id: Option<u32>,
+) -> Result<Vec<u32>> {
+    generate_greedy_stream(
+        context,
+        model,
+        prompt_tokens,
+        max_new_tokens,
+        eos_token_id,
+        |_| Ok(()),
+    )
 }

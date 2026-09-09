@@ -1,9 +1,13 @@
+use std::io::{
+    self,
+    Write,
+};
+
 use tiny_metal_llm::{
     error::{
         Result,
         TinyError,
-    }, generation::generate_greedy, metal::MetalContext, model::Transformer,
-    tokenizer::{SentencePieceTokenizer, Tokenizer},
+    }, generation::generate_greedy_stream, metal::MetalContext, model::Transformer, tokenizer::{SentencePieceTokenizer, StreamingDecoder, Tokenizer},
 };
 
 use crate::cli::RunArgs;
@@ -87,29 +91,47 @@ pub fn execute(
         prompt_tokens.len(),
     );
 
-    eprintln!(
-        "generating up to {} tokens...",
-        max_new_tokens,
+    // ---------------------------------------------
+    // 실제 사용자가 보는 출력 시작
+    // ---------------------------------------------
+
+    print!(
+        "{}",
+        args.prompt,
     );
 
-    let generated =
-        generate_greedy(
-            &context,
-            &model,
-            &prompt_tokens,
-            max_new_tokens,
-            tokenizer
-                .eos_token_id(),
-        )?;
+    io::stdout()
+        .flush()?;
 
-    let text =
-        tokenizer.decode(
-            &generated,
-            true,
-        )?;
+    let mut decoder =
+        StreamingDecoder::new(
+            &tokenizer,
+        );
 
-    println!(
-        "{text}"
+    let mut generated_count = 0usize;
+
+    generate_greedy_stream(&context, &model, &prompt_tokens, max_new_tokens,
+        tokenizer.eos_token_id(),
+        |token_id| {
+            generated_count += 1;
+
+            let delta = decoder.push(token_id,)?;
+
+            if !delta.is_empty() {
+                print!("{delta}");
+
+                io::stdout().flush()?;
+            }
+
+            Ok(())
+        },
+    )?;
+
+    println!();
+
+    eprintln!(
+        "generated tokens: {}",
+        generated_count,
     );
 
     Ok(())
