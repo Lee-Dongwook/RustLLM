@@ -57,10 +57,14 @@ impl MetalContext {
             return pipeline;
         }
 
-        println!(
+        if std::env::var_os(
+            "TINY_METAL_LLM_DEBUG",
+        ).is_some() {
+        eprintln!(
             "[metal] compiling pipeline: {}",
             function_name
         );
+        }
 
         let compile_options = CompileOptions::new();
 
