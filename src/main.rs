@@ -8,105 +8,29 @@ mod ops;
 mod tensor;
 mod tokenizer;
 
-use error::{
-    Result,
-    TinyError,
-};
-
-use generation::generate_greedy;
-
-use metal::MetalContext;
-
-use model::Transformer;
-
-use tokenizer::Tokenizer;
+use error::Result;
+use import::inspect_safetensors;
 
 fn main() -> Result<()> {
-    let context =
-        MetalContext::new();
-
-    let model =
-        Transformer::load(
-            &context,
-            "models/tiny",
+    let tensors =
+        inspect_safetensors(
+            "models/source/tinystories-llama-15m/model.safetensors",
         )?;
 
-    let tokenizer =
-        Tokenizer::load_json(
-            "models/tiny/tokenizer.json",
-        )?;
+    println!(
+        "tensor count = {}",
+        tensors.len(),
+    );
 
-    if tokenizer.vocab_size()
-        != model.config()
-            .vocab_size
-    {
-        return Err(
-            TinyError::Tokenizer(
-                format!(
-                    "tokenizer vocabulary size {} does not match model vocabulary size {}",
-                    tokenizer.vocab_size(),
-                    model.config().vocab_size,
-                ),
-            ),
+    for tensor in tensors {
+        println!(
+            "{} | {:?} | {:?} | {} elements",
+            tensor.name,
+            tensor.dtype,
+            tensor.shape,
+            tensor.numel,
         );
     }
-
-    let prompt =
-        "ab";
-
-    let prompt_tokens =
-        tokenizer.encode(
-            prompt,
-        )?;
-
-    println!(
-        "prompt        = {:?}",
-        prompt,
-    );
-
-    println!(
-        "prompt tokens = {:?}",
-        prompt_tokens,
-    );
-
-    let generated =
-        generate_greedy(
-            &context,
-            &model,
-            &prompt_tokens,
-            5,
-            tokenizer.eos_token_id(),
-        )?;
-
-    println!(
-        "all tokens    = {:?}",
-        generated,
-    );
-
-    let text =
-        tokenizer.decode(
-            &generated,
-            true,
-        )?;
-
-    println!(
-        "text          = {:?}",
-        text,
-    );
-
-    let continuation =
-        tokenizer.decode(
-            &generated[
-                prompt_tokens.len()
-                ..
-            ],
-            true,
-        )?;
-
-    println!(
-        "continuation  = {:?}",
-        continuation,
-    );
 
     Ok(())
 }
