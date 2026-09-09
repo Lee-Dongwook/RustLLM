@@ -31,10 +31,11 @@ const MAX_RANK: u32 =
 const MAX_NAME_LEN: u32 =
     1024;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct WeightTensor {
     shape: Vec<usize>,
     data: Vec<f32>,
+    
 }
 
 impl WeightTensor {
@@ -81,6 +82,27 @@ impl ModelWeights {
         &self,
     ) -> usize {
         self.tensors.len()
+    }
+
+    pub fn get(
+        &self,
+        name: &str,
+    ) -> Result<&WeightTensor> {
+        self.tensors
+            .get(name)
+            .ok_or_else(|| {
+                TinyError::MissingWeight(
+                    name.to_string(),
+                )
+            })
+    }
+
+    pub fn contains(
+        &self,
+        name: &str,
+    ) -> bool {
+        self.tensors
+            .contains_key(name)
     }
 
     pub fn is_empty(
