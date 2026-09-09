@@ -16,6 +16,11 @@ pub enum TinyError {
 
     UnsupportedDType(String),
     NonContiguousTensor(String),
+    PositionOutOfRange {
+        start_pos: usize,
+        seq_len: usize,
+        max_seq_len: usize,
+    },
     Metal(String),
 }
 
@@ -77,6 +82,18 @@ impl fmt::Display for TinyError {
                 write!(
                     f,
                     "invalid token id {token_id}: vocabulary size is {vocab_size}"
+                )
+            }
+
+            TinyError::PositionOutOfRange {
+                start_pos,
+                seq_len,
+                max_seq_len,
+            } => {
+                write!(
+                    f,
+                    "position range [{start_pos}, {}) exceeds max sequence length {max_seq_len}",
+                    start_pos + seq_len,
                 )
             }
         }

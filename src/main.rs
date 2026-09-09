@@ -6,63 +6,52 @@ mod tensor;
 
 use error::Result;
 use metal::MetalContext;
+use nn::RotaryEmbedding;
 use tensor::Tensor;
 
 fn main() -> Result<()> {
     let context =
         MetalContext::new();
 
+    let rope =
+        RotaryEmbedding::new(
+            &context,
+            4,
+            16,
+            10_000.0,
+        )?;
+
+    // shape:
+    //
+    // [batch=1, heads=1, seq=2, head_dim=4]
     let x =
         Tensor::from_f32_slice(
             &context,
             &[
-                1.0, 2.0, 3.0,
-                0.0, 0.0, 0.0,
+                // position 0
+                1.0, 2.0, 3.0, 4.0,
+
+                // position 1
+                1.0, 2.0, 3.0, 4.0,
             ],
-            &[2, 3],
+            &[1, 1, 2, 4],
         )?;
 
     let y =
-        x.softmax_last_dim(
+        rope.forward(
             &context,
+            &x,
+            0,
         )?;
 
     println!(
-        "input shape  = {:?}",
-        x.shape().dims(),
-    );
-
-    println!(
-        "output shape = {:?}",
+        "shape  = {:?}",
         y.shape().dims(),
     );
 
     println!(
-        "output       = {:?}",
+        "output = {:?}",
         y.as_f32_slice()?,
-    );
-
-    let output =
-        y.as_f32_slice()?;
-
-    let row0_sum: f32 =
-        output[0..3]
-            .iter()
-            .sum();
-
-    let row1_sum: f32 =
-        output[3..6]
-            .iter()
-            .sum();
-
-    println!(
-        "row 0 sum    = {}",
-        row0_sum,
-    );
-
-    println!(
-        "row 1 sum    = {}",
-        row1_sum,
     );
 
     Ok(())
