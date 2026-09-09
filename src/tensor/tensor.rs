@@ -7,6 +7,7 @@ use crate::ops::{
     softmax_f32,
     batched_matmul_f32,
     attention_scale_mask_f32,
+    add_f32,
 };
 
 use crate::error::{
@@ -36,6 +37,69 @@ pub struct Tensor {
 }
 
 impl Tensor {
+    pub fn add(
+    &self,
+    context: &MetalContext,
+    rhs: &Tensor,
+) -> Result<Self> {
+    if self.dtype != DType::F32
+        || rhs.dtype != DType::F32
+    {
+        return Err(
+            TinyError::UnsupportedDType(
+                "add currently supports only F32"
+                    .to_string(),
+            ),
+        );
+    }
+
+    if self.shape != rhs.shape {
+        return Err(
+            TinyError::ShapeMismatch {
+                left:
+                    self.shape
+                        .dims()
+                        .to_vec(),
+
+                right:
+                    rhs.shape
+                        .dims()
+                        .to_vec(),
+            },
+        );
+    }
+
+    let lhs =
+        if self.is_contiguous() {
+            self.clone()
+        } else {
+            self.contiguous(
+                context,
+            )?
+        };
+
+    let rhs =
+        if rhs.is_contiguous() {
+            rhs.clone()
+        } else {
+            rhs.contiguous(
+                context,
+            )?
+        };
+
+    let buffer =
+        add_f32(
+            context,
+            lhs.metal_buffer()?,
+            rhs.metal_buffer()?,
+        )?;
+
+    Self::from_metal_buffer(
+        buffer,
+        self.shape.dims(),
+        DType::F32,
+    )
+}
     pub fn from_f32_slice(
         context: &MetalContext,
         data: &[f32],

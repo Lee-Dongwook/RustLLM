@@ -10,7 +10,7 @@ mod rope;
 mod batched_matmul;
 mod attention_scale_mask;
 
-pub use add::vector_add;
+pub use add::add_f32;
 pub use matmul::matmul_f32;
 pub use contiguous::materialize_contiguous_f32;
 pub use embedding::embedding_f32;
