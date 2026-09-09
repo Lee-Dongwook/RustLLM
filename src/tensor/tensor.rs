@@ -140,48 +140,93 @@ impl Tensor {
             ),
           );
         }
+        
+        let mut order: Vec<usize> = 
+            (0..rank).collect();
+        
+        order.swap(
+            dim_a,
+            dim_b,
+        );
 
-        if dim_a == dim_b {
-            return Ok(
-                self.clone()
-            )
+        self.permute(&order,)
+    }
+
+    pub fn permute(
+        &self,
+        order: &[usize],
+    ) -> Result<Self> {
+        let rank = self.rank();
+
+        if order.len() != rank {
+            return Err(
+                TinyError::InvalidDimension(format!(
+                    "permute order length {} does not match tensor rank {}",
+                    order.len(),
+                    rank,
+                ),
+              ),
+            );
         }
 
-        let mut dims = 
-            self.shape
-                .dims()
-                .to_vec();
+        let mut seen = vec![false; rank];
 
-        dims.swap(
-            dim_a,
-            dim_b,
-        );
+        for &dim in order {
+            if dim >= rank {
+                return Err(
+                    TinyError::InvalidDimension(
+                    format!(
+                        "dimension {dim} does not exist for rank {rank}",
+                    ),
+                  ),
+                );
+            }
 
-        let mut strides = 
-            self.strides
-                .values()
-                .to_vec();
+            if seen[dim] {
+                return Err(
+                    TinyError::InvalidDimension(
+                    format!(
+                        "dimension {dim} appears more than once in permutation",
+                    ),
+                  ),
+                );
+            }
+
+            seen[dim] = true;
+        }
+
+        let old_dims = self.shape.dims();
+        let old_strides = self.strides.values();
+
+        let new_dims: Vec<usize> = 
+            order
+                .iter()
+                .map(|&dim| {
+                    old_dims[dim]
+                })
+                .collect();
         
-        strides.swap(
-            dim_a,
-            dim_b,
-        );
-
+        let new_strides: Vec<usize> = 
+            order
+                .iter()
+                .map(|&dim| {
+                    old_strides[dim]
+                })
+                .collect();
+        
         Ok(Self {
-            storage: Arc::clone(
-                &self.storage,
-            ),
-
-            shape: 
+            storage:
+                Arc::clone(
+                    &self.storage,
+                ),
+            shape:
                 Shape::new(
-                    &dims,
+                    &new_dims,
                 )?,
-            
             strides:
                 Strides::from_values(
-                    strides,
+                    new_strides,
                 ),
-            
             dtype:
                 self.dtype,
         })

@@ -11,14 +11,18 @@ fn main() -> Result<()> {
     let context =
         MetalContext::new();
 
+    let data: Vec<f32> =
+        (1..=24)
+            .map(|value| {
+                value as f32
+            })
+            .collect();
+
     let x =
         Tensor::from_f32_slice(
             &context,
-            &[
-                1.0, 2.0, 3.0,
-                4.0, 5.0, 6.0,
-            ],
-            &[2, 3],
+            &data,
+            &[2, 3, 4],
         )?;
 
     println!(
@@ -26,53 +30,47 @@ fn main() -> Result<()> {
     );
 
     println!(
-        "shape       = {:?}",
+        "shape      = {:?}",
         x.shape().dims(),
     );
 
     println!(
-        "strides     = {:?}",
+        "strides    = {:?}",
         x.strides().values(),
     );
 
     println!(
-        "contiguous  = {}",
+        "contiguous = {}",
         x.is_contiguous(),
     );
 
-    println!(
-        "data        = {:?}",
-        x.as_f32_slice()?,
-    );
-
-    let xt =
-        x.transpose(
-            0,
-            1,
+    let y =
+        x.permute(
+            &[1, 0, 2],
         )?;
 
     println!();
     println!(
-        "--- Transpose View ---"
+        "--- Permuted ---"
     );
 
     println!(
-        "shape       = {:?}",
-        xt.shape().dims(),
+        "shape      = {:?}",
+        y.shape().dims(),
     );
 
     println!(
-        "strides     = {:?}",
-        xt.strides().values(),
+        "strides    = {:?}",
+        y.strides().values(),
     );
 
     println!(
-        "contiguous  = {}",
-        xt.is_contiguous(),
+        "contiguous = {}",
+        y.is_contiguous(),
     );
 
-    let xt =
-        xt.contiguous(
+    let y =
+        y.contiguous(
             &context,
         )?;
 
@@ -82,23 +80,23 @@ fn main() -> Result<()> {
     );
 
     println!(
-        "shape       = {:?}",
-        xt.shape().dims(),
+        "shape      = {:?}",
+        y.shape().dims(),
     );
 
     println!(
-        "strides     = {:?}",
-        xt.strides().values(),
+        "strides    = {:?}",
+        y.strides().values(),
     );
 
     println!(
-        "contiguous  = {}",
-        xt.is_contiguous(),
+        "contiguous = {}",
+        y.is_contiguous(),
     );
 
     println!(
-        "data        = {:?}",
-        xt.as_f32_slice()?,
+        "data       = {:?}",
+        y.as_f32_slice()?,
     );
 
     Ok(())
