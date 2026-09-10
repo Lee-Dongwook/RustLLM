@@ -40,3 +40,32 @@ kernel void attention_scale_mask_f32(
             * scale;
     }
 }
+
+// Scores remain in F16 storage, but scaling is carried out in FP32 before the
+// result is rounded back to half precision. This matches the F16 matmul policy.
+kernel void attention_scale_mask_f16(
+    device const half* input [[buffer(0)]],
+    device half* output [[buffer(1)]],
+
+    constant float& scale [[buffer(2)]],
+    constant uint& query_len [[buffer(3)]],
+    constant uint& key_len [[buffer(4)]],
+    constant uint& query_start_pos [[buffer(5)]],
+    constant uint& numel [[buffer(6)]],
+
+    uint id [[thread_position_in_grid]]
+) {
+    if (id >= numel) {
+        return;
+    }
+
+    uint key_index = id % key_len;
+    uint query_index = (id / key_len) % query_len;
+    uint absolute_query_position = query_start_pos + query_index;
+
+    if (key_index > absolute_query_position) {
+        output[id] = half(-INFINITY);
+    } else {
+        output[id] = half(float(input[id]) * scale);
+    }
+}
