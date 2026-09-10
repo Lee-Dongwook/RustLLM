@@ -1,4 +1,4 @@
-use std::fs;
+use std::{fs, path::Path};
 
 use tiny_metal_llm::{
     error::Result,
@@ -38,20 +38,29 @@ pub fn execute(args: ImportArgs) -> Result<()> {
 
     println!("output: {}", args.output.display(),);
 
-    for file_name in [
-        "tokenizer.model",
-        "tokenizer_config.json",
-        "special_tokens_map.json",
-    ] {
-        let source = args.source.join(file_name);
+    copy_tokenizer_files(&args.source, &args.output)?;
 
-        if source.exists() {
-            let target = args.output.join(file_name);
+    Ok(())
+}
 
-            fs::copy(&source, &target)?;
+const TOKENIZER_FILES: &[&str] = &[
+    "tokenizer.model",
+    "tokenizer.json",
+    "tokenizer_config.json",
+    "special_tokens_map.json",
+    "vocab.json",
+    "merges.txt",
+];
 
-            println!("copied {file_name}",);
+fn copy_tokenizer_files(source: &Path, output: &Path) -> Result<()> {
+    for file_name in TOKENIZER_FILES {
+        let source_path = source.join(file_name);
+        if !source_path.exists() {
+            continue;
         }
+
+        fs::copy(&source_path, output.join(file_name))?;
+        println!("copied {file_name}");
     }
 
     Ok(())

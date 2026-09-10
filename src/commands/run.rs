@@ -6,7 +6,7 @@ use tiny_metal_llm::{
     metal::MetalContext,
     model::Transformer,
     tensor::DType,
-    tokenizer::{SentencePieceTokenizer, StreamingDecoder, Tokenizer},
+    tokenizer::{ModelTokenizer, StreamingDecoder, Tokenizer},
 };
 
 use crate::cli::{DTypeArg, RunArgs};
@@ -24,7 +24,7 @@ pub fn execute(args: RunArgs) -> Result<()> {
 
     eprintln!("model dtype: {:?}", model.dtype());
 
-    let tokenizer = SentencePieceTokenizer::from_model_dir(&args.model)?;
+    let tokenizer = ModelTokenizer::from_model_dir(&args.model)?;
 
     if tokenizer.vocab_size() != model.config().vocab_size {
         return Err(TinyError::Tokenizer(format!(
