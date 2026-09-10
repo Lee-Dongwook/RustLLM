@@ -105,6 +105,7 @@ impl SelfAttention {
             self.num_heads,
             self.rope.max_seq_len(),
             self.head_dim,
+            input.dtype(),
         )?;
         self.forward_with_cache(context, input, &mut cache)
     }

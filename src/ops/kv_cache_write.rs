@@ -1,7 +1,7 @@
 use crate::{
     error::{Result, TinyError},
     metal::MetalContext,
-    tensor::Tensor,
+    tensor::{DType, Tensor},
 };
 use ::metal::MTLSize;
 use std::{ffi::c_void, mem};
@@ -12,6 +12,48 @@ pub fn kv_cache_write_f32(
     source: &Tensor,
     start: usize,
 ) -> Result<()> {
+    kv_cache_write(
+        context,
+        cache,
+        source,
+        start,
+        DType::F32,
+        "kv_cache_write_f32",
+    )
+}
+
+pub fn kv_cache_write_f16(
+    context: &MetalContext,
+    cache: &Tensor,
+    source: &Tensor,
+    start: usize,
+) -> Result<()> {
+    kv_cache_write(
+        context,
+        cache,
+        source,
+        start,
+        DType::F16,
+        "kv_cache_write_f16",
+    )
+}
+
+fn kv_cache_write(
+    context: &MetalContext,
+    cache: &Tensor,
+    source: &Tensor,
+    start: usize,
+    dtype: DType,
+    kernel_name: &str,
+) -> Result<()> {
+    if cache.dtype() != dtype || source.dtype() != dtype {
+        return Err(TinyError::UnsupportedDType(format!(
+            "{kernel_name} expects {dtype:?} cache and source, got {:?} and {:?}",
+            cache.dtype(),
+            source.dtype(),
+        )));
+    }
+
     if cache.rank() != 4
         || source.rank() != 4
         || cache.dim(0)? != 1
@@ -39,7 +81,7 @@ pub fn kv_cache_write_f32(
     let source = source.contiguous(context)?;
     let pipeline = context.pipeline(
         include_str!("../../kernels/kv_cache_write.metal"),
-        "kv_cache_write_f32",
+        kernel_name,
     );
     let command = context.command_queue.new_command_buffer();
     let encoder = command.new_compute_command_encoder();
