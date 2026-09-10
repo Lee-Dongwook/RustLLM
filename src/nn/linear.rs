@@ -1,12 +1,17 @@
 use crate::error::{Result, TinyError};
 
+use super::QuantizedLinear;
 use crate::metal::MetalContext;
 use crate::tensor::{DType, Tensor};
 
 pub struct Linear {
-    weight: Tensor,
+    weight: LinearWeight,
     in_features: usize,
     out_features: usize,
+}
+enum LinearWeight {
+    Dense(Tensor),
+    Int8(QuantizedLinear),
 }
 
 impl Linear {
@@ -22,9 +27,29 @@ impl Linear {
         let out_features = weight.dim(1)?;
 
         Ok(Self {
-            weight,
+            weight: LinearWeight::Dense(weight),
             in_features,
             out_features,
+        })
+    }
+
+    pub fn from_i8(
+        context: &MetalContext,
+        shape: &[usize],
+        values: &[i8],
+        scales: &[f32],
+    ) -> Result<Self> {
+        if shape.len() != 2 {
+            return Err(TinyError::InvalidDimension(
+                "INT8 Linear weight must have rank 2".into(),
+            ));
+        }
+        Ok(Self {
+            weight: LinearWeight::Int8(QuantizedLinear::from_i8_parts(
+                context, shape[0], shape[1], values, scales,
+            )?),
+            in_features: shape[0],
+            out_features: shape[1],
         })
     }
 
@@ -37,7 +62,10 @@ impl Linear {
     }
 
     pub fn weight(&self) -> &Tensor {
-        &self.weight
+        match &self.weight {
+            LinearWeight::Dense(weight) => weight,
+            LinearWeight::Int8(_) => panic!("INT8 Linear has no dense Tensor weight"),
+        }
     }
 
     pub fn forward(&self, context: &MetalContext, input: &Tensor) -> Result<Tensor> {
@@ -56,23 +84,36 @@ impl Linear {
             )));
         }
 
-        if input.dtype() != self.weight.dtype() {
+        if input.dtype() != self.dtype() {
             return Err(TinyError::UnsupportedDType(format!(
                 "Linear input dtype {:?} does not match weight dtype {:?}",
                 input.dtype(),
-                self.weight.dtype(),
+                self.dtype(),
             )));
         }
 
-        input.matmul(context, &self.weight)
+        match &self.weight {
+            LinearWeight::Dense(weight) => input.matmul(context, weight),
+            LinearWeight::Int8(weight) => weight.forward(context, input),
+        }
     }
 
     pub fn dtype(&self) -> DType {
-        self.weight.dtype()
+        match &self.weight {
+            LinearWeight::Dense(weight) => weight.dtype(),
+            LinearWeight::Int8(_) => DType::F16,
+        }
     }
 
     pub fn to_dtype(&self, context: &MetalContext, dtype: DType) -> Result<Self> {
-        let weight = self.weight.to_dtype(context, dtype)?;
+        let weight = match &self.weight {
+            LinearWeight::Dense(weight) => LinearWeight::Dense(weight.to_dtype(context, dtype)?),
+            LinearWeight::Int8(_) => {
+                return Err(TinyError::UnsupportedDType(
+                    "INT8 Linear cannot be dtype-converted".into(),
+                ));
+            }
+        };
 
         Ok(Self {
             weight,

@@ -15,6 +15,25 @@ pub struct QuantizedLinear {
 }
 
 impl QuantizedLinear {
+    pub fn from_i8_parts(
+        context: &MetalContext,
+        in_features: usize,
+        out_features: usize,
+        weight: &[i8],
+        scales: &[f32],
+    ) -> Result<Self> {
+        if weight.len() != in_features * out_features || scales.len() != out_features {
+            return Err(TinyError::InvalidShape(
+                "invalid INT8 linear weight or scale shape".into(),
+            ));
+        }
+        Ok(Self {
+            weight: MetalBuffer::from_i8_slice(context, weight),
+            scales: MetalBuffer::from_slice(context, scales),
+            in_features,
+            out_features,
+        })
+    }
     pub fn from_f16_weight(context: &MetalContext, weight: &Tensor) -> Result<Self> {
         if weight.rank() != 2 || weight.dtype() != DType::F16 {
             return Err(TinyError::UnsupportedDType(
