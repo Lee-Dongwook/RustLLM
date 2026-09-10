@@ -1,12 +1,12 @@
 # RustLLM
 
-Apple Metal GPU에서 소형 Transformer 언어 모델의 **추론 과정**을 직접 구현해 보는 Rust 프로젝트입니다. 텐서 연산, Metal 커널, Transformer 블록, Llama 가중치 로딩, SentencePiece 토크나이저, greedy 토큰 생성을 한 저장소에서 다룹니다.
+Apple Metal GPU에서 소형 Transformer 언어 모델의 **추론 과정**을 직접 구현해 보는 Rust 프로젝트입니다. 텐서 연산, Metal 커널, Transformer 블록, Llama 가중치 로딩, SentencePiece/Hugging Face 토크나이저, autoregressive 토큰 생성을 한 저장소에서 다룹니다.
 
 `models/tiny`는 내부 추론 경로 확인을 위한 매우 작은 예제 모델입니다. Hugging Face에서 받거나 변환한 실제 모델은 Git에 포함하지 않으며, 각 개발자가 아래 방법으로 내려받습니다.
 
 ## 현재 구현된 기능
 
-- Metal 기반 F32/F16 텐서 저장소와 shape/stride 관리
+- Metal 기반 F32/F16 텐서 저장소와 shape/stride 관리, 모델 전체 dtype 변환
 - Metal 셰이더 기반 연산
   - 덧셈, 원소별 곱셈, SiLU, RMSNorm, Softmax
   - F32 행렬 곱셈과 F16 입력/F32 누산/F16 출력 MatMul MVP
@@ -16,10 +16,11 @@ Apple Metal GPU에서 소형 Transformer 언어 모델의 **추론 과정**을 �
   - Token embedding, multi-head self-attention, RMSNorm
   - SwiGLU MLP, residual connection, LM head
 - `config.json`과 커스텀 바이너리 `model.bin` 가중치 포맷 로딩 및 shape 검증
-- Llama `tokenizer.model` 기반 SentencePiece encode/decode
+- `tokenizer.model` 기반 SentencePiece와 `tokenizer.json` 기반 Hugging Face encode/decode
 - greedy 및 temperature/top-k/top-p seeded autoregressive generation, EOS 종료 처리
 - 레이어별 Key/Value cache를 이용한 토큰 단위 디코딩
-- import 시 원본 SentencePiece 파일을 변환 모델 폴더에 함께 복사
+- import 시 지원되는 원본 토크나이저 파일을 변환 모델 폴더에 함께 복사
+- 모델 설정을 빠르게 확인하는 `inspect` 명령
 
 ## 동작 환경
 
@@ -74,7 +75,7 @@ SentencePiece decode
 
 Hugging Face 모델을 `hf download <repo-id> --local-dir models/source/<model-name>`으로 내려받은 뒤 변환합니다. 모델 파일은 의도적으로 `.gitignore`에 포함되어 있으므로 Git에 추가하지 않습니다.
 
-변환기는 Llama config/safetensors를 내부 포맷으로 바꾸고 `config.json`, `model.bin`, `tokenizer.model`, `tokenizer_config.json`, `special_tokens_map.json`을 출력 폴더에 준비합니다.
+변환기는 Llama config/safetensors를 내부 포맷으로 바꾸고 `config.json`, `model.bin` 및 원본에 있는 토크나이저 관련 파일을 출력 폴더에 준비합니다. 지원 파일은 `tokenizer.model`, `tokenizer.json`, `tokenizer_config.json`, `special_tokens_map.json`, `vocab.json`, `merges.txt`입니다.
 
 다른 경로의 모델을 변환하려면 입력 모델 디렉터리와 출력 디렉터리를 순서대로 전달합니다.
 
@@ -83,6 +84,35 @@ cargo run -- import --source path/to/source-model --output path/to/output-model
 ```
 
 입력 디렉터리에는 `config.json`과 `model.safetensors`가 필요합니다. 현재 변환기는 bias 없는 multi-head attention만 지원하며, `num_key_value_heads`가 `num_attention_heads`와 다른 GQA/MQA 모델 또는 bias 텐서가 있는 모델은 명확한 오류로 중단합니다.
+
+## 명령어와 생성 옵션
+
+모델의 설정만 확인할 때는 Metal GPU 없이 다음 명령을 실행할 수 있습니다.
+
+```bash
+cargo run -- inspect --model models/llama2.c-stories110M
+```
+
+`run`은 기본적으로 greedy decoding을 사용합니다. `--temperature`가 `0`보다 클 때만 확률 샘플링이 활성화되며, 재현 가능한 결과를 위해 `--seed`를 지정할 수 있습니다.
+
+```bash
+cargo run -- run \\
+  --model models/llama2.c-stories110M \\
+  --prompt "Once upon a time" \\
+  --dtype f16 \\
+  --max-tokens 64 \\
+  --temperature 0.8 \\
+  --top-k 40 \\
+  --top-p 0.95 \\
+  --seed 42 \\
+  --metrics
+```
+
+- `--dtype f32|f16`: 실행 시 모델을 F32 또는 F16으로 사용합니다. 기본값은 `f32`입니다.
+- `--max-tokens`: 생성할 최대 새 토큰 수입니다. 모델의 남은 context length를 넘지 않습니다.
+- `--temperature`: `0`이면 greedy decoding, 양수이면 확률 샘플링을 사용합니다.
+- `--top-k`, `--top-p`: 샘플링 후보를 각각 상위 K개 및 누적 확률 P로 제한합니다.
+- `--metrics`: prefill, decode, 전체 생성 시간과 속도를 stderr에 출력합니다.
 
 ## 예제 모델 구성
 
@@ -143,18 +173,20 @@ cargo run -- import --source path/to/source-model --output path/to/output-model
 models/<model-name>/
 ├── config.json
 ├── model.bin
-├── tokenizer.model
-├── tokenizer_config.json
-└── special_tokens_map.json
+├── tokenizer.model          # 선택: SentencePiece
+├── tokenizer.json           # 선택: Hugging Face Tokenizers
+└── tokenizer_config.json    # 선택: BOS/EOS 메타데이터
 ```
 
 - `config.json`: vocabulary, hidden size, layer/head 수, 최대 시퀀스 길이, RMSNorm/RoPE 설정을 담습니다.
 - `model.bin`: 프로젝트의 `TMLLWGHT` magic과 version 1을 사용하는 커스텀 `f32` 가중치 포맷입니다. 텐서 이름, shape, 값의 수를 검증하며 필요한 가중치가 없거나 shape가 다르면 로딩을 중단합니다.
-- `tokenizer.model`: 원본 Llama SentencePiece 모델입니다. `run`은 이 파일로 프롬프트를 ID로 바꾸고, 생성 ID를 문자열로 되돌립니다.
-- `tokenizer_config.json`: `add_bos_token`과 `add_eos_token`을 읽습니다. TinyStories는 입력 시작에 BOS를 붙입니다.
-- `special_tokens_map.json`: 원본 모델의 special token 메타데이터입니다.
+- `tokenizer.model`: 원본 Llama SentencePiece 모델입니다. 있으면 우선 사용합니다.
+- `tokenizer.json`: Hugging Face Tokenizers 형식입니다. `tokenizer.model`이 없을 때 사용합니다.
+- `tokenizer_config.json`: 토크나이저별 BOS/EOS 메타데이터를 읽습니다.
 
-`tie_word_embeddings`로 인해 `model.embed_tokens.weight`가 생략되고 `lm_head.weight`만 있는 체크포인트도 지원합니다. 변환 결과에 SentencePiece 파일까지 복사되므로 변환 직후 `run`으로 실제 텍스트 생성을 실행할 수 있습니다.
+`run`은 선택된 토크나이저로 프롬프트를 ID로 바꾸고, 생성 ID를 문자열로 되돌립니다. `tokenizer.model`과 `tokenizer.json` 중 하나는 반드시 필요합니다.
+
+`tie_word_embeddings`로 인해 `model.embed_tokens.weight`가 생략되고 `lm_head.weight`만 있는 체크포인트도 지원합니다. 변환 결과에 지원되는 토크나이저 파일까지 복사되므로 변환 직후 `run`으로 실제 텍스트 생성을 실행할 수 있습니다.
 
 ## 테스트 및 확인
 
@@ -163,9 +195,9 @@ cargo test
 cargo run -- run --model models/llama2.c-stories110M --prompt "Once upon a time"
 ```
 
-`cargo test`는 KV Cache 초기화와 가중치 파일 저장·로드 round trip을 확인합니다. Hugging Face 모델이 필요한 SentencePiece 통합 테스트는 모델을 내려받은 뒤 `cargo test -- --ignored`로 실행합니다. `run`은 Apple Metal GPU가 필요합니다.
+`cargo test`는 텐서/Metal 연산, Transformer, KV Cache, 샘플러, 토크나이저 선택과 가중치 파일 저장·로드를 확인합니다. Hugging Face 모델이 필요한 SentencePiece 통합 테스트는 모델을 내려받은 뒤 `cargo test -- --ignored`로 실행합니다. `run`은 Apple Metal GPU가 필요합니다.
 
-`import` 실행 시에는 `source tensors`, `converted tensors`, `copied tokenizer.model`이 출력되는지 확인합니다. 문제가 생기면 아래를 우선 확인하세요.
+`import` 실행 시에는 `source tensors`, `converted tensors`, `copied <tokenizer-file>`이 출력되는지 확인합니다. 문제가 생기면 아래를 우선 확인하세요.
 
 - 모델 파일 오류: 입력 디렉터리 아래 `config.json`, `model.safetensors`가 모두 있는지 확인
 - 모델 구조 오류: GQA/MQA 모델인지 `num_key_value_heads`와 `num_attention_heads`를 확인
@@ -175,10 +207,9 @@ cargo run -- run --model models/llama2.c-stories110M --prompt "Once upon a time"
 ## 현재 한계와 다음 개선 방향
 
 - 학습(training), fine-tuning, 모델 다운로드 기능은 포함하지 않습니다.
-- 생성은 greedy decoding만 지원하며 temperature, top-k/top-p sampling은 없습니다.
-- KV cache는 레이어별 고정 크기 버퍼에 K/V를 기록합니다. Attention의 F16 전환은 아직 지원하지 않습니다.
-- FP16 지원은 Tensor/storage와 rank-2 MatMul까지입니다. 전체 Transformer inference는 아직 F32입니다.
-- 배치 추론, FP16 RMSNorm/Softmax/RoPE, 자동화된 GPU 통합 테스트는 다음 단계의 개선 항목입니다.
+- KV cache는 레이어별 고정 크기 버퍼에 K/V를 기록합니다.
+- 샘플링은 CPU에서 수행하므로, 대규모 vocabulary 모델에서는 병목이 될 수 있습니다.
+- 배치 추론과 자동화된 GPU 통합 테스트는 다음 단계의 개선 항목입니다.
 
 ## 기술 스택
 
