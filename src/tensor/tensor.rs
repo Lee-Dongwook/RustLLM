@@ -1,7 +1,7 @@
 use crate::ops::{
     attention_scale_mask_f16, attention_scale_mask_f32, batched_matmul_f16, batched_matmul_f32,
     cast, materialize_contiguous_f16, materialize_contiguous_f32, matmul_f16, matmul_f32,
-    softmax_f32,
+    softmax_f16, softmax_f32,
 };
 use std::sync::Arc;
 
@@ -420,10 +420,6 @@ impl Tensor {
     }
 
     pub fn softmax_last_dim(&self, context: &MetalContext) -> Result<Self> {
-        if self.dtype != DType::F32 {
-            return Err(TinyError::UnsupportedDType(format!("{:?}", self.dtype,)));
-        }
-
         if self.rank() == 0 {
             return Err(TinyError::InvalidDimension(
                 "Softmax requires at least one dimension".to_string(),
@@ -440,9 +436,12 @@ impl Tensor {
 
         let rows = input.numel() / width;
 
-        let buffer = softmax_f32(context, input.metal_buffer()?, rows, width)?;
+        let buffer = match self.dtype {
+            DType::F32 => softmax_f32(context, input.metal_buffer()?, rows, width)?,
+            DType::F16 => softmax_f16(context, input.metal_buffer()?, rows, width)?,
+        };
 
-        Self::from_metal_buffer(buffer, input.shape().dims(), DType::F32)
+        Self::from_metal_buffer(buffer, input.shape().dims(), self.dtype)
     }
 
     pub fn batched_matmul(&self, context: &MetalContext, rhs: &Tensor) -> Result<Self> {
@@ -663,6 +662,23 @@ mod tests {
         }
     }
 
+    fn assert_softmax_close(expected: &Tensor, actual: &Tensor) {
+        assert_eq!(actual.dtype(), DType::F16);
+
+        for (expected, actual) in expected
+            .to_f32_vec()
+            .unwrap()
+            .iter()
+            .zip(actual.to_f32_vec().unwrap().iter())
+        {
+            let error = (expected - actual).abs();
+            assert!(
+                error < 0.01,
+                "F16 softmax mismatch: expected={expected}, actual={actual}, error={error}",
+            );
+        }
+    }
+
     #[test]
     fn f16_batched_matmul_stays_close_to_f32_and_returns_f16() {
         let Some(context) = metal_context() else {
@@ -775,5 +791,59 @@ mod tests {
         let values = actual.to_f32_vec().unwrap();
         assert_eq!(&values[..3], &[0.5, 1.0, 1.5]);
         assert!(values[3].is_infinite() && values[3].is_sign_negative());
+    }
+
+    #[test]
+    fn f16_softmax_last_dim_matches_f32_and_normalizes_each_row() {
+        let Some(context) = metal_context() else {
+            return;
+        };
+        let input =
+            Tensor::from_f32_slice(&context, &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], &[2, 3]).unwrap();
+
+        let expected = input.softmax_last_dim(&context).unwrap();
+        let actual = input
+            .to_dtype(&context, DType::F16)
+            .unwrap()
+            .softmax_last_dim(&context)
+            .unwrap();
+
+        assert_softmax_close(&expected, &actual);
+        for row in actual.to_f32_vec().unwrap().chunks(3) {
+            let sum = row.iter().sum::<f32>();
+            assert!((sum - 1.0).abs() < 0.01, "softmax row sum = {sum}");
+        }
+    }
+
+    #[test]
+    fn f16_attention_mask_and_softmax_match_f32_and_zero_masked_probabilities() {
+        let Some(context) = metal_context() else {
+            return;
+        };
+        let scores = Tensor::from_f32_slice(
+            &context,
+            &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0],
+            &[1, 1, 3, 3],
+        )
+        .unwrap();
+
+        let expected = scores
+            .attention_scale_mask(&context, 0.5, 0)
+            .unwrap()
+            .softmax_last_dim(&context)
+            .unwrap();
+        let actual = scores
+            .to_dtype(&context, DType::F16)
+            .unwrap()
+            .attention_scale_mask(&context, 0.5, 0)
+            .unwrap()
+            .softmax_last_dim(&context)
+            .unwrap();
+
+        assert_softmax_close(&expected, &actual);
+        let values = actual.to_f32_vec().unwrap();
+        assert_eq!(values[1], 0.0);
+        assert_eq!(values[2], 0.0);
+        assert_eq!(values[5], 0.0);
     }
 }

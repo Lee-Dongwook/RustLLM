@@ -76,3 +76,59 @@ pub fn softmax_f32(
 
     Ok(output)
 }
+
+/// Stable row-wise softmax with F16 storage and FP32 reductions.
+pub fn softmax_f16(
+    context: &MetalContext,
+    input: &MetalBuffer,
+    rows: usize,
+    width: usize,
+) -> Result<MetalBuffer> {
+    if rows == 0 || width == 0 {
+        return Err(TinyError::InvalidShape(
+            "Softmax rows and width must be greater than zero".to_string(),
+        ));
+    }
+
+    if input.len() != rows * width || input.byte_len() != input.len() * 2 {
+        return Err(TinyError::InvalidShape(format!(
+            "F16 softmax input has {} elements ({} bytes), expected {} F16 elements",
+            input.len(),
+            input.byte_len(),
+            rows * width,
+        )));
+    }
+
+    let output = MetalBuffer::empty_with_element_size(context, input.len(), 2);
+    let shader_source = include_str!("../../kernels/softmax.metal");
+    let pipeline = context.pipeline(shader_source, "softmax_f16");
+
+    if THREADGROUP_SIZE > pipeline.max_total_threads_per_threadgroup() {
+        return Err(TinyError::Metal(format!(
+            "Softmax requires {THREADGROUP_SIZE} threads per group, but pipeline supports at most {}",
+            pipeline.max_total_threads_per_threadgroup(),
+        )));
+    }
+
+    let width_u32 = u32::try_from(width)
+        .map_err(|_| TinyError::InvalidShape("Softmax width exceeds u32".to_string()))?;
+    let command_buffer = context.command_queue.new_command_buffer();
+    let encoder = command_buffer.new_compute_command_encoder();
+    encoder.set_compute_pipeline_state(pipeline.as_ref());
+    encoder.set_buffer(0, Some(input.raw()), 0);
+    encoder.set_buffer(1, Some(output.raw()), 0);
+    encoder.set_bytes(
+        2,
+        mem::size_of::<u32>() as u64,
+        &width_u32 as *const u32 as *const c_void,
+    );
+    encoder.dispatch_thread_groups(
+        MTLSize::new(rows as u64, 1, 1),
+        MTLSize::new(THREADGROUP_SIZE, 1, 1),
+    );
+    encoder.end_encoding();
+    command_buffer.commit();
+    command_buffer.wait_until_completed();
+
+    Ok(output)
+}

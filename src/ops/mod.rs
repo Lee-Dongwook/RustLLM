@@ -28,4 +28,4 @@ pub use mul::{mul_f16, mul_f32};
 pub use rmsnorm::{rmsnorm, rmsnorm_f32};
 pub use rope::{rope, rope_f32};
 pub use silu::{silu_f16, silu_f32};
-pub use softmax::softmax_f32;
+pub use softmax::{softmax_f16, softmax_f32};
