@@ -1,7 +1,7 @@
 use crate::error::{Result, TinyError};
 
 use crate::metal::MetalContext;
-use crate::tensor::Tensor;
+use crate::tensor::{DType, Tensor};
 
 use super::{Linear, SwiGlu};
 
@@ -50,6 +50,14 @@ impl Mlp {
         self.down_proj.out_features()
     }
 
+    pub fn to_dtype(&self, context: &MetalContext, dtype: DType) -> Result<Self> {
+        Ok(Self {
+            gate_proj: self.gate_proj.to_dtype(context, dtype)?,
+            up_proj: self.up_proj.to_dtype(context, dtype)?,
+            down_proj: self.down_proj.to_dtype(context, dtype)?,
+        })
+    }
+
     pub fn forward(&self, context: &MetalContext, input: &Tensor) -> Result<Tensor> {
         let gate = self.gate_proj.forward(context, input)?;
 
@@ -58,5 +66,70 @@ impl Mlp {
         let hidden = SwiGlu::forward(context, &gate, &up)?;
 
         self.down_proj.forward(context, &hidden)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Linear, Mlp};
+    use crate::error::TinyError;
+    use crate::metal::MetalContext;
+    use crate::tensor::{DType, Tensor};
+
+    fn assert_close(actual: &[f32], expected: &[f32], tolerance: f32) {
+        assert_eq!(actual.len(), expected.len());
+
+        for (index, (actual, expected)) in actual.iter().zip(expected).enumerate() {
+            let error = (actual - expected).abs();
+            assert!(
+                error <= tolerance,
+                "value {index} differs by {error}: actual={actual}, expected={expected}",
+            );
+        }
+    }
+
+    fn metal_context() -> Option<MetalContext> {
+        match MetalContext::new() {
+            Ok(context) => Some(context),
+            Err(TinyError::Metal(message)) => {
+                eprintln!("skipping Metal MLP test: {message}");
+                None
+            }
+            Err(error) => panic!("failed to create Metal context: {error}"),
+        }
+    }
+
+    #[test]
+    fn f16_mlp_stays_close_to_f32_and_returns_f16() {
+        let Some(context) = metal_context() else {
+            return;
+        };
+
+        let input = Tensor::from_f32_slice(&context, &[0.25, -0.5, 1.25, 0.75], &[2, 2]).unwrap();
+        let gate_weight =
+            Tensor::from_f32_slice(&context, &[0.5, -0.25, 0.75, 1.0, 0.5, -0.5], &[2, 3]).unwrap();
+        let up_weight =
+            Tensor::from_f32_slice(&context, &[0.25, 0.5, -0.75, 0.5, -1.0, 0.25], &[2, 3])
+                .unwrap();
+        let down_weight =
+            Tensor::from_f32_slice(&context, &[0.5, -0.25, 0.75, 0.5, -0.5, 1.0], &[3, 2]).unwrap();
+        let mlp = Mlp::new(
+            Linear::new(gate_weight).unwrap(),
+            Linear::new(up_weight).unwrap(),
+            Linear::new(down_weight).unwrap(),
+        )
+        .unwrap();
+
+        let output_f32 = mlp.forward(&context, &input).unwrap();
+        let mlp_f16 = mlp.to_dtype(&context, DType::F16).unwrap();
+        let input_f16 = input.to_dtype(&context, DType::F16).unwrap();
+        let output_f16 = mlp_f16.forward(&context, &input_f16).unwrap();
+
+        assert_eq!(output_f16.dtype(), DType::F16);
+        assert_close(
+            &output_f16.to_f32_vec().unwrap(),
+            &output_f32.to_f32_vec().unwrap(),
+            5e-2,
+        );
     }
 }

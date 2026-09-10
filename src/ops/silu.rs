@@ -53,3 +53,41 @@ pub fn silu_f32(context: &MetalContext, input: &MetalBuffer) -> Result<MetalBuff
 
     Ok(output)
 }
+
+pub fn silu_f16(context: &MetalContext, input: &MetalBuffer) -> Result<MetalBuffer> {
+    if input.is_empty() {
+        return Err(TinyError::InvalidShape(
+            "SiLU input cannot be empty".to_string(),
+        ));
+    }
+
+    let output = MetalBuffer::empty_with_element_size(context, input.len(), 2);
+
+    let shader_source = include_str!("../../kernels/silu.metal");
+
+    let pipeline = context.pipeline(shader_source, "silu_f16");
+
+    let command_buffer = context.command_queue.new_command_buffer();
+
+    let encoder = command_buffer.new_compute_command_encoder();
+
+    encoder.set_compute_pipeline_state(pipeline.as_ref());
+
+    encoder.set_buffer(0, Some(input.raw()), 0);
+
+    encoder.set_buffer(1, Some(output.raw()), 0);
+
+    let grid = MTLSize::new(input.len() as u64, 1, 1);
+
+    let threads_per_group = MTLSize::new(input.len().min(256) as u64, 1, 1);
+
+    encoder.dispatch_threads(grid, threads_per_group);
+
+    encoder.end_encoding();
+
+    command_buffer.commit();
+
+    command_buffer.wait_until_completed();
+
+    Ok(output)
+}

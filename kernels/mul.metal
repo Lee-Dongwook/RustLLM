@@ -18,3 +18,19 @@ kernel void mul_f32(
     output[id] =
         a[id] * b[id];
 }
+
+kernel void mul_f16(
+    device const half* left [[buffer(0)]],
+    device const half* right [[buffer(1)]],
+    device half* output [[buffer(2)]],
+    uint index [[thread_position_in_grid]]
+) {
+    float a =
+        float(left[index]);
+
+    float b =
+        float(right[index]);
+
+    output[index] =
+        half(a * b);
+}

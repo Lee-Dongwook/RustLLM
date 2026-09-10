@@ -22,3 +22,15 @@ kernel void silu_f32(
     output[id] =
         x * sigmoid;
 }
+
+kernel void silu_f16(
+    device const half* input [[buffer(0)]],
+    device half* output [[buffer(1)]],
+    uint index [[thread_position_in_grid]]
+) {
+    float x = float(input[index]);
+
+    float result = x / (1.0f + exp(-x));
+
+    output[index] = half(result);
+}
