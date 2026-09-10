@@ -16,7 +16,7 @@ kernel void gqa_qk_f32(
     constant uint& head_dim [[buffer(7)]],
 
     uint3 group_id [[threadgroup_position_in_grid]],
-    uint2 tid [[thread_position_in_threadgroup]]
+    uint3 tid [[thread_position_in_threadgroup]]
 ) {
     threadgroup float tile_q[TILE_SIZE][TILE_SIZE];
     threadgroup float tile_k[TILE_SIZE][TILE_SIZE];
@@ -171,7 +171,7 @@ kernel void gqa_qk_f16(
     constant uint& head_dim [[buffer(7)]],
 
     uint3 group_id [[threadgroup_position_in_grid]],
-    uint2 tid [[thread_position_in_threadgroup]]
+    uint3 tid [[thread_position_in_threadgroup]]
 ) {
     threadgroup half tile_q[TILE_SIZE][TILE_SIZE];
     threadgroup half tile_k[TILE_SIZE][TILE_SIZE];
@@ -320,98 +320,6 @@ kernel void gqa_qk_f16(
 
 kernel void gqa_pv_f32(
     device const float* probs [[buffer(0)]],
-    device const float* value [[buffer(1)]],
-    device float* output [[buffer(2)]],
-    constant uint& q_heads [[buffer(3)]],
-    constant uint& kv_heads [[buffer(4)]],
-    constant uint& q_len [[buffer(5)]],
-    constant uint& kv_len [[buffer(6)]],
-    constant uint& head_dim [[buffer(7)]],
-    uint3 group_id [[threadgroup_position_in_grid]],
-    uint2 tid [[thread_position_in_threadgroup]]
-) {
-    threadgroup float tile_p[TILE_SIZE][TILE_SIZE];
-    threadgroup float tile_v[TILE_SIZE][TILE_SIZE];
-    uint flat_head = group_id.z;
-    uint batch = flat_head / q_heads;
-    uint q_head = flat_head % q_heads;
-    uint kv_head = q_head / (q_heads / kv_heads);
-    uint query_pos = group_id.y * TILE_SIZE + tid.y;
-    uint dim = group_id.x * TILE_SIZE + tid.x;
-    uint p_base = (batch * q_heads + q_head) * q_len * kv_len;
-    uint v_base = (batch * kv_heads + kv_head) * kv_len * head_dim;
-    float sum = 0.0f;
-
-    for (uint tile = 0; tile < (kv_len + TILE_SIZE - 1) / TILE_SIZE; ++tile) {
-        uint key = tile * TILE_SIZE + tid.x;
-        tile_p[tid.y][tid.x] = (query_pos < q_len && key < kv_len)
-            ? probs[p_base + query_pos * kv_len + key] : 0.0f;
-
-        uint value_key = tile * TILE_SIZE + tid.y;
-        tile_v[tid.y][tid.x] = (value_key < kv_len && dim < head_dim)
-            ? value[v_base + value_key * head_dim + dim] : 0.0f;
-        threadgroup_barrier(mem_flags::mem_threadgroup);
-
-        for (uint inner = 0; inner < TILE_SIZE; ++inner) {
-            sum += tile_p[tid.y][inner] * tile_v[inner][tid.x];
-        }
-        threadgroup_barrier(mem_flags::mem_threadgroup);
-    }
-
-    if (query_pos < q_len && dim < head_dim) {
-        uint output_base = (batch * q_heads + q_head) * q_len * head_dim;
-        output[output_base + query_pos * head_dim + dim] = sum;
-    }
-}
-
-kernel void gqa_pv_f16(
-    device const half* probs [[buffer(0)]],
-    device const half* value [[buffer(1)]],
-    device half* output [[buffer(2)]],
-    constant uint& q_heads [[buffer(3)]],
-    constant uint& kv_heads [[buffer(4)]],
-    constant uint& q_len [[buffer(5)]],
-    constant uint& kv_len [[buffer(6)]],
-    constant uint& head_dim [[buffer(7)]],
-    uint3 group_id [[threadgroup_position_in_grid]],
-    uint2 tid [[thread_position_in_threadgroup]]
-) {
-    threadgroup half tile_p[TILE_SIZE][TILE_SIZE];
-    threadgroup half tile_v[TILE_SIZE][TILE_SIZE];
-    uint flat_head = group_id.z;
-    uint batch = flat_head / q_heads;
-    uint q_head = flat_head % q_heads;
-    uint kv_head = q_head / (q_heads / kv_heads);
-    uint query_pos = group_id.y * TILE_SIZE + tid.y;
-    uint dim = group_id.x * TILE_SIZE + tid.x;
-    uint p_base = (batch * q_heads + q_head) * q_len * kv_len;
-    uint v_base = (batch * kv_heads + kv_head) * kv_len * head_dim;
-    float sum = 0.0f;
-
-    for (uint tile = 0; tile < (kv_len + TILE_SIZE - 1) / TILE_SIZE; ++tile) {
-        uint key = tile * TILE_SIZE + tid.x;
-        tile_p[tid.y][tid.x] = (query_pos < q_len && key < kv_len)
-            ? probs[p_base + query_pos * kv_len + key] : half(0.0h);
-
-        uint value_key = tile * TILE_SIZE + tid.y;
-        tile_v[tid.y][tid.x] = (value_key < kv_len && dim < head_dim)
-            ? value[v_base + value_key * head_dim + dim] : half(0.0h);
-        threadgroup_barrier(mem_flags::mem_threadgroup);
-
-        for (uint inner = 0; inner < TILE_SIZE; ++inner) {
-            sum += float(tile_p[tid.y][inner]) * float(tile_v[inner][tid.x]);
-        }
-        threadgroup_barrier(mem_flags::mem_threadgroup);
-    }
-
-    if (query_pos < q_len && dim < head_dim) {
-        uint output_base = (batch * q_heads + q_head) * q_len * head_dim;
-        output[output_base + query_pos * head_dim + dim] = half(sum);
-    }
-}
-
-kernel void gqa_pv_f32(
-    device const float* probs [[buffer(0)]],
     device const float* v [[buffer(1)]],
     device float* output [[buffer(2)]],
 
@@ -422,7 +330,7 @@ kernel void gqa_pv_f32(
     constant uint& head_dim [[buffer(7)]],
 
     uint3 group_id [[threadgroup_position_in_grid]],
-    uint2 tid [[thread_position_in_threadgroup]]
+    uint3 tid [[thread_position_in_threadgroup]]
 ) {
     threadgroup float tile_p[TILE_SIZE][TILE_SIZE];
     threadgroup float tile_v[TILE_SIZE][TILE_SIZE];
@@ -573,7 +481,7 @@ kernel void gqa_pv_f16(
     constant uint& head_dim [[buffer(7)]],
 
     uint3 group_id [[threadgroup_position_in_grid]],
-    uint2 tid [[thread_position_in_threadgroup]]
+    uint3 tid [[thread_position_in_threadgroup]]
 ) {
     threadgroup half tile_p[TILE_SIZE][TILE_SIZE];
     threadgroup half tile_v[TILE_SIZE][TILE_SIZE];
