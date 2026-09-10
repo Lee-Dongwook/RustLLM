@@ -16,10 +16,10 @@ mod softmax;
 
 pub use add::add_f32;
 pub use attention_scale_mask::attention_scale_mask_f32;
-pub use batched_matmul::batched_matmul_f32;
+pub use batched_matmul::{batched_matmul_f16, batched_matmul_f32};
 pub use cast::cast;
 pub use concat_sequence::concat_sequence_f32;
-pub use contiguous::materialize_contiguous_f32;
+pub use contiguous::{materialize_contiguous_f16, materialize_contiguous_f32};
 pub use embedding::embedding_f32;
 pub use kv_cache_write::kv_cache_write_f32;
 pub use matmul::matmul_f32;

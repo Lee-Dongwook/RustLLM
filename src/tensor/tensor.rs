@@ -1,6 +1,6 @@
 use crate::ops::{
-    attention_scale_mask_f32, batched_matmul_f32, cast, materialize_contiguous_f32, matmul_f16,
-    matmul_f32, softmax_f32,
+    attention_scale_mask_f32, batched_matmul_f16, batched_matmul_f32, cast,
+    materialize_contiguous_f16, materialize_contiguous_f32, matmul_f16, matmul_f32, softmax_f32,
 };
 use std::sync::Arc;
 
@@ -70,16 +70,20 @@ impl Tensor {
             return Ok(self.clone());
         }
 
-        if self.dtype != DType::F32 {
-            return Err(TinyError::UnsupportedDType(format!("{:?}", self.dtype,)));
-        }
-
-        let buffer = materialize_contiguous_f32(
-            context,
-            self.metal_buffer()?,
-            self.shape.dims(),
-            self.strides.values(),
-        )?;
+        let buffer = match self.dtype {
+            DType::F32 => materialize_contiguous_f32(
+                context,
+                self.metal_buffer()?,
+                self.shape.dims(),
+                self.strides.values(),
+            )?,
+            DType::F16 => materialize_contiguous_f16(
+                context,
+                self.metal_buffer()?,
+                self.shape.dims(),
+                self.strides.values(),
+            )?,
+        };
 
         let shape = self.shape.clone();
 
@@ -441,10 +445,11 @@ impl Tensor {
     }
 
     pub fn batched_matmul(&self, context: &MetalContext, rhs: &Tensor) -> Result<Self> {
-        if self.dtype != DType::F32 || rhs.dtype != DType::F32 {
-            return Err(TinyError::UnsupportedDType(
-                "batched matmul currently supports only F32".to_string(),
-            ));
+        if self.dtype != rhs.dtype {
+            return Err(TinyError::UnsupportedDType(format!(
+                "mixed batched matmul dtypes: {:?} and {:?}",
+                self.dtype, rhs.dtype
+            )));
         }
 
         if self.rank() < 3 {
@@ -508,22 +513,33 @@ impl Tensor {
             rhs.contiguous(context)?
         };
 
-        let buffer = batched_matmul_f32(
-            context,
-            lhs.metal_buffer()?,
-            rhs.metal_buffer()?,
-            batch_count,
-            m,
-            k,
-            n,
-        )?;
+        let buffer = match self.dtype {
+            DType::F32 => batched_matmul_f32(
+                context,
+                lhs.metal_buffer()?,
+                rhs.metal_buffer()?,
+                batch_count,
+                m,
+                k,
+                n,
+            )?,
+            DType::F16 => batched_matmul_f16(
+                context,
+                lhs.metal_buffer()?,
+                rhs.metal_buffer()?,
+                batch_count,
+                m,
+                k,
+                n,
+            )?,
+        };
 
         let mut output_dims = lhs_dims[..rank - 2].to_vec();
 
         output_dims.push(m);
         output_dims.push(n);
 
-        Self::from_metal_buffer(buffer, &output_dims, DType::F32)
+        Self::from_metal_buffer(buffer, &output_dims, self.dtype)
     }
 
     pub fn attention_scale_mask(
@@ -581,5 +597,100 @@ impl Tensor {
             strides,
             dtype,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DType, Tensor};
+    use crate::{error::TinyError, metal::MetalContext};
+
+    fn metal_context() -> Option<MetalContext> {
+        match MetalContext::new() {
+            Ok(context) => Some(context),
+            Err(TinyError::Metal(message)) => {
+                eprintln!("skipping Metal batched matmul test: {message}");
+                None
+            }
+            Err(error) => panic!("failed to create Metal context: {error}"),
+        }
+    }
+
+    fn assert_f16_close_to_f32(expected: &Tensor, actual: &Tensor) {
+        assert_eq!(actual.dtype(), DType::F16);
+
+        for (expected, actual) in expected
+            .to_f32_vec()
+            .unwrap()
+            .iter()
+            .zip(actual.to_f32_vec().unwrap().iter())
+        {
+            let error = (expected - actual).abs();
+            assert!(
+                error < 0.05,
+                "F16 batched matmul mismatch: expected={expected}, actual={actual}, error={error}",
+            );
+        }
+    }
+
+    #[test]
+    fn f16_batched_matmul_stays_close_to_f32_and_returns_f16() {
+        let Some(context) = metal_context() else {
+            return;
+        };
+        let a = Tensor::from_f32_slice(
+            &context,
+            &[1.0, 2.0, 3.0, 4.0, 1.0, 2.0, 3.0, 4.0],
+            &[2, 2, 2],
+        )
+        .unwrap();
+        let b = Tensor::from_f32_slice(
+            &context,
+            &[1.0, 0.0, 0.0, 1.0, 2.0, 2.0, 2.0, 2.0],
+            &[2, 2, 2],
+        )
+        .unwrap();
+
+        let expected = a.batched_matmul(&context, &b).unwrap();
+        let actual = a
+            .to_dtype(&context, DType::F16)
+            .unwrap()
+            .batched_matmul(&context, &b.to_dtype(&context, DType::F16).unwrap())
+            .unwrap();
+
+        assert_f16_close_to_f32(&expected, &actual);
+    }
+
+    #[test]
+    fn f16_batched_matmul_materializes_transposed_attention_keys() {
+        let Some(context) = metal_context() else {
+            return;
+        };
+        let q = Tensor::from_f32_slice(
+            &context,
+            &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0],
+            &[1, 2, 2, 2],
+        )
+        .unwrap();
+        let k = Tensor::from_f32_slice(
+            &context,
+            &[1.0, 0.0, 0.0, 1.0, 2.0, 1.0, 1.0, 2.0],
+            &[1, 2, 2, 2],
+        )
+        .unwrap();
+
+        let expected = q
+            .batched_matmul(&context, &k.transpose(2, 3).unwrap())
+            .unwrap();
+        let q_f16 = q.to_dtype(&context, DType::F16).unwrap();
+        let k_t_f16 = k
+            .to_dtype(&context, DType::F16)
+            .unwrap()
+            .transpose(2, 3)
+            .unwrap();
+        assert!(!k_t_f16.is_contiguous());
+
+        let actual = q_f16.batched_matmul(&context, &k_t_f16).unwrap();
+        assert_f16_close_to_f32(&expected, &actual);
     }
 }

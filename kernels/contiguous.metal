@@ -33,3 +33,31 @@ kernel void contiguous_f32(
 
     destination[id] = source[source_index];
 }
+
+kernel void contiguous_f16(
+    device const half* source [[buffer(0)]],
+    device half* destination [[buffer(1)]],
+
+    constant uint* dims [[buffer(2)]],
+    constant uint* strides [[buffer(3)]],
+
+    constant uint& rank [[buffer(4)]],
+    constant uint& numel [[buffer(5)]],
+
+    uint id [[thread_position_in_grid]]
+) {
+    if (id >= numel) {
+        return;
+    }
+
+    uint remaining = id;
+    uint source_index = 0;
+
+    for (int dim = int(rank) - 1; dim >= 0; --dim) {
+        uint coordinate = remaining % dims[dim];
+        remaining /= dims[dim];
+        source_index += coordinate * strides[dim];
+    }
+
+    destination[id] = source[source_index];
+}
