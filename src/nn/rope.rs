@@ -1,7 +1,7 @@
 use crate::error::{Result, TinyError};
 
 use crate::metal::MetalContext;
-use crate::ops::rope_f32;
+use crate::ops::rope;
 
 use crate::tensor::{DType, Tensor};
 
@@ -91,7 +91,7 @@ impl RotaryEmbedding {
         input: &Tensor,
         start_pos: usize,
     ) -> Result<Tensor> {
-        if input.dtype() != DType::F32 {
+        if !matches!(input.dtype(), DType::F32 | DType::F16) {
             return Err(TinyError::UnsupportedDType(format!("{:?}", input.dtype(),)));
         }
 
@@ -125,22 +125,63 @@ impl RotaryEmbedding {
             });
         }
 
-        let input = if input.is_contiguous() {
-            input.clone()
-        } else {
-            input.contiguous(context)?
+        rope(context, input, &self.cos_table, &self.sin_table, start_pos)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RotaryEmbedding;
+    use crate::{
+        error::TinyError,
+        metal::MetalContext,
+        tensor::{DType, Tensor},
+    };
+
+    fn metal_context() -> Option<MetalContext> {
+        match MetalContext::new() {
+            Ok(context) => Some(context),
+            Err(TinyError::Metal(message)) => {
+                eprintln!("skipping Metal RoPE test: {message}");
+                None
+            }
+            Err(error) => panic!("failed to create Metal context: {error}"),
+        }
+    }
+
+    fn assert_close(actual: &[f32], expected: &[f32], tolerance: f32) {
+        assert_eq!(actual.len(), expected.len());
+        for (index, (actual, expected)) in actual.iter().zip(expected).enumerate() {
+            let error = (actual - expected).abs();
+            assert!(
+                error <= tolerance,
+                "value {index} differs by {error}: actual={actual}, expected={expected}",
+            );
+        }
+    }
+
+    #[test]
+    fn f16_rope_stays_close_to_f32_and_returns_f16() {
+        let Some(context) = metal_context() else {
+            return;
         };
+        let rope = RotaryEmbedding::new(&context, 4, 8, 10_000.0).unwrap();
+        let input = Tensor::from_f32_slice(
+            &context,
+            &[0.125, -1.25, 2.5, 3.75, -0.5, 1.5, -2.25, 4.0],
+            &[1, 1, 2, 4],
+        )
+        .unwrap();
 
-        let output = rope_f32(
-            context,
-            input.metal_buffer()?,
-            self.cos_table.metal_buffer()?,
-            self.sin_table.metal_buffer()?,
-            seq_len,
-            self.head_dim,
-            start_pos,
-        )?;
+        let output_f32 = rope
+            .forward(&context, &input, 1)
+            .unwrap()
+            .to_f32_vec()
+            .unwrap();
+        let input_f16 = input.to_dtype(&context, DType::F16).unwrap();
+        let output_f16 = rope.forward(&context, &input_f16, 1).unwrap();
 
-        Tensor::from_metal_buffer(output, input.shape().dims(), DType::F32)
+        assert_eq!(output_f16.dtype(), DType::F16);
+        assert_close(&output_f16.to_f32_vec().unwrap(), &output_f32, 0.01);
     }
 }
