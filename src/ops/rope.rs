@@ -249,12 +249,6 @@ pub fn rope(
             input.rank(),
         )));
     }
-    if input.dtype() == DType::F16 && !input.is_contiguous() {
-        return Err(TinyError::NonContiguousTensor(
-            "F16 RoPE currently requires contiguous input".to_string(),
-        ));
-    }
-
     let seq_len = input.dim(input.rank() - 2)?;
     let head_dim = input.dim(input.rank() - 1)?;
     if head_dim == 0 || !head_dim.is_multiple_of(2) {
@@ -278,7 +272,11 @@ pub fn rope(
         ));
     }
 
-    let input = input.contiguous(context)?;
+    let input = if input.is_contiguous() {
+        input.clone()
+    } else {
+        input.contiguous(context)?
+    };
     let buffer = match input.dtype() {
         DType::F32 => rope_f32(
             context,

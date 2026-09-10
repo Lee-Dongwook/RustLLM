@@ -184,4 +184,29 @@ mod tests {
         assert_eq!(output_f16.dtype(), DType::F16);
         assert_close(&output_f16.to_f32_vec().unwrap(), &output_f32, 0.01);
     }
+
+    #[test]
+    fn f16_rope_materializes_non_contiguous_input() {
+        let Some(context) = metal_context() else {
+            return;
+        };
+        let rope = RotaryEmbedding::new(&context, 4, 8, 10_000.0).unwrap();
+        let input = Tensor::from_f32_slice(
+            &context,
+            &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0],
+            &[1, 2, 1, 4],
+        )
+        .unwrap()
+        .to_dtype(&context, DType::F16)
+        .unwrap()
+        .permute(&[0, 2, 1, 3])
+        .unwrap();
+
+        assert!(!input.is_contiguous());
+
+        let output = rope.forward(&context, &input, 0).unwrap();
+
+        assert_eq!(output.dtype(), DType::F16);
+        assert!(output.is_contiguous());
+    }
 }
