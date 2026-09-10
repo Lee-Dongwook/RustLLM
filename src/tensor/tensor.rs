@@ -1,5 +1,5 @@
 use crate::ops::{
-    attention_scale_mask_f32, batched_matmul_f32, materialize_contiguous_f32, matmul_f16,
+    attention_scale_mask_f32, batched_matmul_f32, cast, materialize_contiguous_f32, matmul_f16,
     matmul_f32, softmax_f32,
 };
 use std::sync::Arc;
@@ -304,6 +304,14 @@ impl Tensor {
         }
     }
 
+    /// Converts a contiguous tensor between the F32 and F16 storage formats.
+    ///
+    /// This is the bridge for selectively using F16 kernels; it does not make
+    /// all tensor operations F16-capable.
+    pub fn to_dtype(&self, context: &MetalContext, dtype: DType) -> Result<Self> {
+        cast(context, self, dtype)
+    }
+
     pub(crate) fn metal_buffer(&self) -> Result<&MetalBuffer> {
         self.storage.metal_buffer()
     }
@@ -557,5 +565,21 @@ impl Tensor {
         )?;
 
         Self::from_metal_buffer(buffer, input.shape().dims(), DType::F32)
+    }
+
+    pub fn empty(context: &MetalContext, dims: &[usize], dtype: DType) -> Result<Self> {
+        let shape = Shape::new(dims)?;
+
+        let strides = Strides::contiguous(&shape);
+
+        let buffer =
+            MetalBuffer::empty_with_element_size(context, shape.numel(), dtype.size_in_bytes());
+
+        Ok(Self {
+            storage: Arc::new(Storage::Metal(buffer)),
+            shape,
+            strides,
+            dtype,
+        })
     }
 }

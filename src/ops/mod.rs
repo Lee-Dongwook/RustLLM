@@ -1,6 +1,7 @@
 mod add;
 mod attention_scale_mask;
 mod batched_matmul;
+mod cast;
 mod concat_sequence;
 mod contiguous;
 mod embedding;
@@ -16,6 +17,7 @@ mod softmax;
 pub use add::add_f32;
 pub use attention_scale_mask::attention_scale_mask_f32;
 pub use batched_matmul::batched_matmul_f32;
+pub use cast::cast;
 pub use concat_sequence::concat_sequence_f32;
 pub use contiguous::materialize_contiguous_f32;
 pub use embedding::embedding_f32;
