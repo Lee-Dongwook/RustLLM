@@ -2,7 +2,7 @@ use crate::error::{Result, TinyError};
 
 use crate::metal::MetalContext;
 use crate::model::LayerKvCache;
-use crate::tensor::Tensor;
+use crate::tensor::{DType, Tensor};
 
 use super::{Linear, RotaryEmbedding};
 
@@ -75,6 +75,19 @@ impl SelfAttention {
             )));
         }
 
+        if k_proj.dtype() != q_proj.dtype()
+            || v_proj.dtype() != q_proj.dtype()
+            || out_proj.dtype() != q_proj.dtype()
+        {
+            return Err(TinyError::UnsupportedDType(format!(
+                "SelfAttention projection dtypes must match, got Q={:?}, K={:?}, V={:?}, O={:?}",
+                q_proj.dtype(),
+                k_proj.dtype(),
+                v_proj.dtype(),
+                out_proj.dtype(),
+            )));
+        }
+
         Ok(Self {
             q_proj,
             k_proj,
@@ -99,7 +112,24 @@ impl SelfAttention {
         self.head_dim
     }
 
+    pub fn dtype(&self) -> DType {
+        self.q_proj.dtype()
+    }
+
+    pub fn to_dtype(&self, context: &MetalContext, dtype: DType) -> Result<Self> {
+        Self::new(
+            self.q_proj.to_dtype(context, dtype)?,
+            self.k_proj.to_dtype(context, dtype)?,
+            self.v_proj.to_dtype(context, dtype)?,
+            self.out_proj.to_dtype(context, dtype)?,
+            self.rope.clone(),
+            self.num_heads,
+        )
+    }
+
     pub fn forward(&self, context: &MetalContext, input: &Tensor) -> Result<Tensor> {
+        self.validate_input_dtype(input)?;
+
         let mut cache = LayerKvCache::new(
             context,
             self.num_heads,
@@ -116,6 +146,16 @@ impl SelfAttention {
         x: &Tensor,
         cache: &mut LayerKvCache,
     ) -> Result<Tensor> {
+        self.validate_input_dtype(x)?;
+
+        if cache.dtype() != self.dtype() {
+            return Err(TinyError::UnsupportedDType(format!(
+                "SelfAttention/cache dtype mismatch: attention={:?}, cache={:?}",
+                self.dtype(),
+                cache.dtype(),
+            )));
+        }
+
         if x.rank() != 2 {
             return Err(TinyError::ModelFormat(format!(
                 "attention expects [sequence, hidden], got {:?}",
@@ -193,5 +233,191 @@ impl SelfAttention {
         let attention = attention.reshape(&[seq_len, self.hidden_size])?;
 
         self.out_proj.forward(context, &attention)
+    }
+
+    fn validate_input_dtype(&self, input: &Tensor) -> Result<()> {
+        if input.dtype() != self.dtype() {
+            return Err(TinyError::UnsupportedDType(format!(
+                "SelfAttention input dtype {:?} does not match attention dtype {:?}",
+                input.dtype(),
+                self.dtype(),
+            )));
+        }
+
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Linear, RotaryEmbedding, SelfAttention};
+    use crate::{
+        error::TinyError,
+        metal::MetalContext,
+        model::LayerKvCache,
+        tensor::{DType, Tensor},
+    };
+
+    fn metal_context() -> Option<MetalContext> {
+        match MetalContext::new() {
+            Ok(context) => Some(context),
+            Err(TinyError::Metal(message)) => {
+                eprintln!("skipping Metal SelfAttention test: {message}");
+                None
+            }
+            Err(error) => panic!("failed to create Metal context: {error}"),
+        }
+    }
+
+    fn attention(context: &MetalContext) -> SelfAttention {
+        let identity = Tensor::from_f32_slice(
+            context,
+            &[
+                1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+            ],
+            &[4, 4],
+        )
+        .unwrap();
+        SelfAttention::new(
+            Linear::new(identity.clone()).unwrap(),
+            Linear::new(identity.clone()).unwrap(),
+            Linear::new(identity.clone()).unwrap(),
+            Linear::new(identity).unwrap(),
+            RotaryEmbedding::new(context, 2, 8, 10_000.0).unwrap(),
+            2,
+        )
+        .unwrap()
+    }
+
+    fn assert_close(expected: &Tensor, actual: &Tensor, tolerance: f32) {
+        assert_eq!(expected.shape().dims(), actual.shape().dims());
+        for (expected, actual) in expected
+            .to_f32_vec()
+            .unwrap()
+            .iter()
+            .zip(actual.to_f32_vec().unwrap().iter())
+        {
+            let error = (expected - actual).abs();
+            assert!(
+                error < tolerance,
+                "attention mismatch: expected={expected}, actual={actual}, error={error}",
+            );
+        }
+    }
+
+    #[test]
+    fn f16_self_attention_matches_f32_without_external_cache() {
+        let Some(context) = metal_context() else {
+            return;
+        };
+        let attention = attention(&context);
+        let input = Tensor::from_f32_slice(
+            &context,
+            &[0.1, 0.2, 0.3, 0.4, -0.2, 0.5, 0.7, -0.1],
+            &[2, 4],
+        )
+        .unwrap();
+
+        let expected = attention.forward(&context, &input).unwrap();
+        let attention_f16 = attention.to_dtype(&context, DType::F16).unwrap();
+        let actual = attention_f16
+            .forward(&context, &input.to_dtype(&context, DType::F16).unwrap())
+            .unwrap();
+
+        assert_eq!(attention_f16.dtype(), DType::F16);
+        assert_eq!(actual.dtype(), DType::F16);
+        assert_close(&expected, &actual, 0.1);
+    }
+
+    #[test]
+    fn f16_self_attention_matches_f32_across_decode_cache() {
+        let Some(context) = metal_context() else {
+            return;
+        };
+        let attention = attention(&context);
+        let attention_f16 = attention.to_dtype(&context, DType::F16).unwrap();
+        let token_one = Tensor::from_f32_slice(&context, &[0.1, 0.2, 0.3, 0.4], &[1, 4]).unwrap();
+        let token_two = Tensor::from_f32_slice(&context, &[-0.3, 0.6, 0.2, 0.8], &[1, 4]).unwrap();
+        let mut cache_f32 = LayerKvCache::new(&context, 2, 8, 2, DType::F32).unwrap();
+        let mut cache_f16 = LayerKvCache::new(&context, 2, 8, 2, DType::F16).unwrap();
+
+        attention
+            .forward_with_cache(&context, &token_one, &mut cache_f32)
+            .unwrap();
+        attention_f16
+            .forward_with_cache(
+                &context,
+                &token_one.to_dtype(&context, DType::F16).unwrap(),
+                &mut cache_f16,
+            )
+            .unwrap();
+        assert_eq!(cache_f32.len(), 1);
+        assert_eq!(cache_f16.len(), 1);
+
+        let expected = attention
+            .forward_with_cache(&context, &token_two, &mut cache_f32)
+            .unwrap();
+        let actual = attention_f16
+            .forward_with_cache(
+                &context,
+                &token_two.to_dtype(&context, DType::F16).unwrap(),
+                &mut cache_f16,
+            )
+            .unwrap();
+
+        assert_eq!(cache_f16.len(), 2);
+        assert_eq!(actual.dtype(), DType::F16);
+        assert_close(&expected, &actual, 0.1);
+    }
+
+    #[test]
+    fn f16_self_attention_supports_prefill_then_decode() {
+        let Some(context) = metal_context() else {
+            return;
+        };
+        let attention_f16 = attention(&context).to_dtype(&context, DType::F16).unwrap();
+        let prefill = Tensor::from_f32_slice(
+            &context,
+            &[0.1, 0.2, 0.3, 0.4, 0.5, -0.1, 0.2, 0.6, -0.2, 0.4, 0.8, 0.1],
+            &[3, 4],
+        )
+        .unwrap()
+        .to_dtype(&context, DType::F16)
+        .unwrap();
+        let decode = Tensor::from_f32_slice(&context, &[0.3, -0.5, 0.1, 0.9], &[1, 4])
+            .unwrap()
+            .to_dtype(&context, DType::F16)
+            .unwrap();
+        let mut cache = LayerKvCache::new(&context, 2, 8, 2, DType::F16).unwrap();
+
+        attention_f16
+            .forward_with_cache(&context, &prefill, &mut cache)
+            .unwrap();
+        assert_eq!(cache.len(), 3);
+
+        let output = attention_f16
+            .forward_with_cache(&context, &decode, &mut cache)
+            .unwrap();
+        assert_eq!(cache.len(), 4);
+        assert_eq!(output.dtype(), DType::F16);
+        assert_eq!(output.shape().dims(), &[1, 4]);
+    }
+
+    #[test]
+    fn f16_self_attention_rejects_f32_input_and_cache() {
+        let Some(context) = metal_context() else {
+            return;
+        };
+        let attention_f16 = attention(&context).to_dtype(&context, DType::F16).unwrap();
+        let input = Tensor::from_f32_slice(&context, &[0.1, 0.2, 0.3, 0.4], &[1, 4]).unwrap();
+        let mut cache_f32 = LayerKvCache::new(&context, 2, 8, 2, DType::F32).unwrap();
+
+        assert!(attention_f16.forward(&context, &input).is_err());
+        let input_f16 = input.to_dtype(&context, DType::F16).unwrap();
+        assert!(
+            attention_f16
+                .forward_with_cache(&context, &input_f16, &mut cache_f32)
+                .is_err()
+        );
     }
 }
