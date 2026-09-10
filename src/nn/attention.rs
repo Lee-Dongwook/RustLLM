@@ -17,6 +17,8 @@ pub struct SelfAttention {
     hidden_size: usize,
     num_heads: usize,
     head_dim: usize,
+
+    num_kv_heads: usize,
 }
 
 impl SelfAttention {
@@ -27,10 +29,17 @@ impl SelfAttention {
         out_proj: Linear,
         rope: RotaryEmbedding,
         num_heads: usize,
+        num_kv_heads: usize,
     ) -> Result<Self> {
         if num_heads == 0 {
             return Err(TinyError::InvalidShape(
                 "attention num_heads cannot be zero".to_string(),
+            ));
+        }
+
+        if num_kv_heads == 0 {
+            return Err(TinyError::InvalidShape(
+                "attention num_kv_heads cannot be zero".to_string(),
             ));
         }
 
@@ -42,24 +51,6 @@ impl SelfAttention {
             )));
         }
 
-        if k_proj.in_features() != hidden_size || k_proj.out_features() != hidden_size {
-            return Err(TinyError::InvalidShape(
-                "k_proj shape must match hidden size".to_string(),
-            ));
-        }
-
-        if v_proj.in_features() != hidden_size || v_proj.out_features() != hidden_size {
-            return Err(TinyError::InvalidShape(
-                "v_proj shape must match hidden size".to_string(),
-            ));
-        }
-
-        if out_proj.in_features() != hidden_size || out_proj.out_features() != hidden_size {
-            return Err(TinyError::InvalidShape(
-                "out_proj shape must match hidden size".to_string(),
-            ));
-        }
-
         if !hidden_size.is_multiple_of(num_heads) {
             return Err(TinyError::InvalidShape(format!(
                 "hidden size {hidden_size} must be divisible by num_heads {num_heads}"
@@ -67,6 +58,32 @@ impl SelfAttention {
         }
 
         let head_dim = hidden_size / num_heads;
+        let q_proj_size = num_heads * head_dim;
+        let kv_proj_size = num_kv_heads * head_dim;
+
+        if k_proj.in_features() != hidden_size || k_proj.out_features() != kv_proj_size {
+            return Err(TinyError::InvalidShape(format!(
+                "k_proj shape must be [{hidden_size}, {kv_proj_size}]"
+            )));
+        }
+
+        if v_proj.in_features() != hidden_size || v_proj.out_features() != kv_proj_size {
+            return Err(TinyError::InvalidShape(format!(
+                "v_proj shape must be [{hidden_size}, {kv_proj_size}]"
+            )));
+        }
+
+        if out_proj.in_features() != q_proj_size || out_proj.out_features() != hidden_size {
+            return Err(TinyError::InvalidShape(format!(
+                "out_proj shape must be [{q_proj_size}, {hidden_size}]"
+            )));
+        }
+
+        if !num_heads.is_multiple_of(num_kv_heads) {
+            return Err(TinyError::InvalidShape(format!(
+                "attention num_heads {num_heads} must be divisible by num_kv_heads {num_kv_heads}"
+            )));
+        }
 
         if rope.head_dim() != head_dim {
             return Err(TinyError::InvalidShape(format!(
@@ -97,6 +114,7 @@ impl SelfAttention {
             hidden_size,
             num_heads,
             head_dim,
+            num_kv_heads,
         })
     }
 
@@ -108,12 +126,20 @@ impl SelfAttention {
         self.num_heads
     }
 
+    pub fn num_kv_heads(&self) -> usize {
+        self.num_kv_heads
+    }
+
     pub fn head_dim(&self) -> usize {
         self.head_dim
     }
 
     pub fn dtype(&self) -> DType {
         self.q_proj.dtype()
+    }
+
+    pub fn num_kv_groups(&self) -> usize {
+        self.num_heads / self.num_kv_heads
     }
 
     pub fn to_dtype(&self, context: &MetalContext, dtype: DType) -> Result<Self> {
@@ -124,6 +150,7 @@ impl SelfAttention {
             self.out_proj.to_dtype(context, dtype)?,
             self.rope.clone(),
             self.num_heads,
+            self.num_kv_heads,
         )
     }
 
@@ -132,7 +159,7 @@ impl SelfAttention {
 
         let mut cache = LayerKvCache::new(
             context,
-            self.num_heads,
+            self.num_kv_heads,
             self.rope.max_seq_len(),
             self.head_dim,
             input.dtype(),
@@ -191,15 +218,9 @@ impl SelfAttention {
         // [1, H, S, D]
         // --------------------------------------------
 
-        let q = q
-            .reshape(&[1, seq_len, self.num_heads, self.head_dim])?
-            .permute(&[0, 2, 1, 3])?;
-        let k = k
-            .reshape(&[1, seq_len, self.num_heads, self.head_dim])?
-            .permute(&[0, 2, 1, 3])?;
-        let v = v
-            .reshape(&[1, seq_len, self.num_heads, self.head_dim])?
-            .permute(&[0, 2, 1, 3])?;
+        let q = self.prepare_heads(&q, seq_len, self.num_heads)?;
+        let k = self.prepare_heads(&k, seq_len, self.num_kv_heads)?;
+        let v = self.prepare_heads(&v, seq_len, self.num_kv_heads)?;
 
         // --------------------------------------------
         // RoPE
@@ -246,6 +267,12 @@ impl SelfAttention {
 
         Ok(())
     }
+
+    fn prepare_heads(&self, tensor: &Tensor, seq_len: usize, num_heads: usize) -> Result<Tensor> {
+        tensor
+            .reshape(&[1, seq_len, num_heads, self.head_dim])?
+            .permute(&[0, 2, 1, 3])
+    }
 }
 
 #[cfg(test)]
@@ -285,6 +312,7 @@ mod tests {
             Linear::new(identity).unwrap(),
             RotaryEmbedding::new(context, 2, 8, 10_000.0).unwrap(),
             2,
+            2,
         )
         .unwrap()
     }
@@ -303,6 +331,71 @@ mod tests {
                 "attention mismatch: expected={expected}, actual={actual}, error={error}",
             );
         }
+    }
+
+    #[test]
+    fn gqa_projection_and_head_layout_use_kv_head_count() {
+        let Some(context) = metal_context() else {
+            return;
+        };
+
+        let linear = |out_features| {
+            Linear::new(
+                Tensor::from_f32_slice(
+                    &context,
+                    &vec![0.0; 12 * out_features],
+                    &[12, out_features],
+                )
+                .unwrap(),
+            )
+            .unwrap()
+        };
+        let attention = SelfAttention::new(
+            linear(12),
+            linear(4),
+            linear(4),
+            linear(12),
+            RotaryEmbedding::new(&context, 4, 32, 10_000.0).unwrap(),
+            3,
+            1,
+        )
+        .unwrap();
+        let input = Tensor::from_f32_slice(&context, &[0.0; 24], &[2, 12]).unwrap();
+
+        let q = attention.q_proj.forward(&context, &input).unwrap();
+        let k = attention.k_proj.forward(&context, &input).unwrap();
+        let v = attention.v_proj.forward(&context, &input).unwrap();
+
+        assert_eq!(q.shape().dims(), &[2, 12]);
+        assert_eq!(k.shape().dims(), &[2, 4]);
+        assert_eq!(v.shape().dims(), &[2, 4]);
+        assert_eq!(attention.num_heads(), 3);
+        assert_eq!(attention.num_kv_heads(), 1);
+        assert_eq!(attention.num_kv_groups(), 3);
+        assert_eq!(
+            attention
+                .prepare_heads(&q, 2, attention.num_heads())
+                .unwrap()
+                .shape()
+                .dims(),
+            &[1, 3, 2, 4]
+        );
+        assert_eq!(
+            attention
+                .prepare_heads(&k, 2, attention.num_kv_heads())
+                .unwrap()
+                .shape()
+                .dims(),
+            &[1, 1, 2, 4]
+        );
+        assert_eq!(
+            attention
+                .prepare_heads(&v, 2, attention.num_kv_heads())
+                .unwrap()
+                .shape()
+                .dims(),
+            &[1, 1, 2, 4]
+        );
     }
 
     #[test]

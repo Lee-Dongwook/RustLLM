@@ -183,6 +183,7 @@ mod tests {
             identity_linear(context),
             RotaryEmbedding::new(context, 2, 8, 10_000.0).unwrap(),
             2,
+            2,
         )
         .unwrap();
         let attention_norm = RmsNorm::new(

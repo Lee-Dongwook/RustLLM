@@ -108,6 +108,14 @@ impl ModelConfig {
         self.hidden_size / self.num_heads
     }
 
+    pub fn q_proj_size(&self) -> usize {
+        self.num_heads * self.head_dim()
+    }
+
+    pub fn kv_proj_size(&self) -> usize {
+        self.num_kv_heads * self.head_dim()
+    }
+
     pub fn num_kv_groups(&self) -> usize {
         self.num_heads / self.num_kv_heads
     }
@@ -160,6 +168,8 @@ mod tests {
 
         config.validate().unwrap();
         assert_eq!(config.head_dim(), 64);
+        assert_eq!(config.q_proj_size(), 576);
+        assert_eq!(config.kv_proj_size(), 192);
         assert_eq!(config.num_kv_groups(), 3);
     }
 

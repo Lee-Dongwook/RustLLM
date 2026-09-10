@@ -13,7 +13,7 @@ impl Transformer {
             context,
             self.config.num_layers,
             self.config.max_seq_len,
-            self.config.num_heads,
+            self.config.num_kv_heads,
             self.config.head_dim(),
             self.dtype(),
         )

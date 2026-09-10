@@ -199,8 +199,6 @@ impl Transformer {
         mut weights: ModelWeights,
     ) -> Result<Self> {
         config.validate()?;
-        ensure_attention_layout_supported(&config)?;
-
         let token_embedding = Embedding::new(take_tensor(
             context,
             &mut weights,
@@ -224,28 +222,28 @@ impl Transformer {
                 context,
                 &mut weights,
                 &format!("{prefix}.attention.q_proj.weight"),
-                &[config.hidden_size, config.hidden_size],
+                &[config.hidden_size, config.q_proj_size()],
             )?)?;
 
             let k_proj = Linear::new(take_tensor(
                 context,
                 &mut weights,
                 &format!("{prefix}.attention.k_proj.weight"),
-                &[config.hidden_size, config.hidden_size],
+                &[config.hidden_size, config.kv_proj_size()],
             )?)?;
 
             let v_proj = Linear::new(take_tensor(
                 context,
                 &mut weights,
                 &format!("{prefix}.attention.v_proj.weight"),
-                &[config.hidden_size, config.hidden_size],
+                &[config.hidden_size, config.kv_proj_size()],
             )?)?;
 
             let out_proj = Linear::new(take_tensor(
                 context,
                 &mut weights,
                 &format!("{prefix}.attention.out_proj.weight"),
-                &[config.hidden_size, config.hidden_size],
+                &[config.q_proj_size(), config.hidden_size],
             )?)?;
 
             let attention = SelfAttention::new(
@@ -255,6 +253,7 @@ impl Transformer {
                 out_proj,
                 rope.clone(),
                 config.num_heads,
+                config.num_kv_heads,
             )?;
 
             let attention_norm = RmsNorm::new(
@@ -324,17 +323,6 @@ impl Transformer {
     }
 }
 
-fn ensure_attention_layout_supported(config: &ModelConfig) -> Result<()> {
-    if config.num_heads != config.num_kv_heads {
-        return Err(TinyError::UnsupportedModel(format!(
-            "GQA model detected: {} query heads, {} KV heads; runtime support is not implemented yet",
-            config.num_heads, config.num_kv_heads,
-        )));
-    }
-
-    Ok(())
-}
-
 fn take_tensor(
     context: &MetalContext,
     weights: &mut ModelWeights,
@@ -358,7 +346,7 @@ fn take_tensor(
 
 #[cfg(test)]
 mod tests {
-    use super::{ModelConfig, Transformer, ensure_attention_layout_supported};
+    use super::{ModelConfig, Transformer};
     use crate::{
         error::TinyError,
         metal::MetalContext,
@@ -422,6 +410,7 @@ mod tests {
             identity_linear(context),
             RotaryEmbedding::new(context, 2, 8, 10_000.0).unwrap(),
             2,
+            2,
         )
         .unwrap();
         let block = TransformerBlock::new(
@@ -479,27 +468,6 @@ mod tests {
                 "Transformer logits mismatch: expected={expected}, actual={actual}, error={error}",
             );
         }
-    }
-
-    #[test]
-    fn rejects_gqa_at_runtime_construction_boundary() {
-        let mut config = ModelConfig {
-            vocab_size: 100,
-            hidden_size: 576,
-            intermediate_size: 1536,
-            num_layers: 4,
-            num_heads: 9,
-            num_kv_heads: 3,
-            max_seq_len: 1024,
-            rms_norm_eps: 1e-5,
-            rope_theta: 10_000.0,
-        };
-
-        let error = ensure_attention_layout_supported(&config).unwrap_err();
-        assert!(matches!(error, TinyError::UnsupportedModel(_)));
-
-        config.num_kv_heads = config.num_heads;
-        ensure_attention_layout_supported(&config).unwrap();
     }
 
     #[test]
