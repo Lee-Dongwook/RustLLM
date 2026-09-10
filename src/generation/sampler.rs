@@ -21,7 +21,9 @@ impl Sampler {
             ));
         }
         let vocab = logits.dim(1)?;
-        let data = logits.as_f32_slice()?;
+        // Sampling is CPU-side; convert F16 logits to F32 here rather than
+        // requiring the model's final projection to remain in F32.
+        let data = logits.to_f32_vec()?;
         self.sample_slice(&data[data.len() - vocab..], config)
     }
     fn sample_slice(&mut self, logits: &[f32], config: &GenerationConfig) -> Result<u32> {
@@ -87,4 +89,38 @@ fn greedy_from_slice(logits: &[f32]) -> Result<u32> {
 }
 pub fn greedy_next_token(logits: &Tensor) -> Result<u32> {
     Sampler::new(0).sample(logits, &GenerationConfig::default())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Sampler;
+    use crate::{
+        error::TinyError,
+        generation::GenerationConfig,
+        metal::MetalContext,
+        tensor::{DType, Tensor},
+    };
+
+    #[test]
+    fn sampler_accepts_f16_logits() {
+        let context = match MetalContext::new() {
+            Ok(context) => context,
+            Err(TinyError::Metal(message)) => {
+                eprintln!("skipping Metal sampler test: {message}");
+                return;
+            }
+            Err(error) => panic!("failed to create Metal context: {error}"),
+        };
+        let logits = Tensor::from_f32_slice(&context, &[0.1, 2.0, 0.5], &[1, 3])
+            .unwrap()
+            .to_dtype(&context, DType::F16)
+            .unwrap();
+
+        assert_eq!(
+            Sampler::new(0)
+                .sample(&logits, &GenerationConfig::default())
+                .unwrap(),
+            1
+        );
+    }
 }

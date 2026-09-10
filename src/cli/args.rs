@@ -1,6 +1,12 @@
 use std::path::PathBuf;
 
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+pub enum DTypeArg {
+    F32,
+    F16,
+}
 
 #[derive(Debug, Parser)]
 #[command(
@@ -29,6 +35,9 @@ pub struct RunArgs {
 
     #[arg(long, short = 'p')]
     pub prompt: String,
+
+    #[arg(long, value_enum, default_value_t = DTypeArg::F32)]
+    pub dtype: DTypeArg,
 
     #[arg(long, default_value_t = 64)]
     pub max_tokens: usize,

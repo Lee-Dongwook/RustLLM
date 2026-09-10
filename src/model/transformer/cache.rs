@@ -1,7 +1,7 @@
 use crate::{
     error::{Result, TinyError},
     metal::MetalContext,
-    tensor::{DType, Tensor},
+    tensor::Tensor,
 };
 
 use super::{KvCache, Transformer};
@@ -15,7 +15,7 @@ impl Transformer {
             self.config.max_seq_len,
             self.config.num_heads,
             self.config.head_dim(),
-            DType::F32,
+            self.dtype(),
         )
     }
 

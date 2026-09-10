@@ -5,10 +5,11 @@ use tiny_metal_llm::{
     generation::{GenerationConfig, generate_stream},
     metal::MetalContext,
     model::Transformer,
+    tensor::DType,
     tokenizer::{SentencePieceTokenizer, StreamingDecoder, Tokenizer},
 };
 
-use crate::cli::RunArgs;
+use crate::cli::{DTypeArg, RunArgs};
 
 pub fn execute(args: RunArgs) -> Result<()> {
     let context = MetalContext::new()?;
@@ -16,6 +17,12 @@ pub fn execute(args: RunArgs) -> Result<()> {
     eprintln!("loading model...");
 
     let model = Transformer::load(&context, &args.model)?;
+    let model = match args.dtype {
+        DTypeArg::F32 => model,
+        DTypeArg::F16 => model.to_dtype(&context, DType::F16)?,
+    };
+
+    eprintln!("model dtype: {:?}", model.dtype());
 
     let tokenizer = SentencePieceTokenizer::from_model_dir(&args.model)?;
 

@@ -1,3 +1,3 @@
 mod args;
 
-pub use args::{Cli, Command, ImportArgs, InspectArgs, RunArgs};
+pub use args::{Cli, Command, DTypeArg, ImportArgs, InspectArgs, RunArgs};

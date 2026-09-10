@@ -7,7 +7,7 @@ use crate::nn::{
     Embedding, Linear, Mlp, RmsNorm, RotaryEmbedding, SelfAttention, TransformerBlock,
 };
 
-use crate::tensor::Tensor;
+use crate::tensor::{DType, Tensor};
 
 use super::{KvCache, ModelConfig, ModelWeights, WeightTensor};
 
@@ -104,6 +104,27 @@ impl Transformer {
 
     pub fn config(&self) -> &ModelConfig {
         &self.config
+    }
+
+    pub fn dtype(&self) -> DType {
+        self.token_embedding.dtype()
+    }
+
+    /// Converts runtime weights while preserving the on-disk F32 model format.
+    pub fn to_dtype(&self, context: &MetalContext, dtype: DType) -> Result<Self> {
+        let blocks = self
+            .blocks
+            .iter()
+            .map(|block| block.to_dtype(context, dtype))
+            .collect::<Result<Vec<_>>>()?;
+
+        Self::new(
+            self.config.clone(),
+            self.token_embedding.to_dtype(context, dtype)?,
+            blocks,
+            self.final_norm.to_dtype(context, dtype)?,
+            self.lm_head.to_dtype(context, dtype)?,
+        )
     }
 
     pub fn forward(&self, context: &MetalContext, token_ids: &[u32]) -> Result<Tensor> {
@@ -321,4 +342,183 @@ fn take_tensor(
     let (shape, data) = weight.into_parts();
 
     Tensor::from_f32_slice(context, &data, &shape)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ModelConfig, Transformer};
+    use crate::{
+        error::TinyError,
+        metal::MetalContext,
+        nn::{Embedding, Linear, Mlp, RmsNorm, RotaryEmbedding, SelfAttention, TransformerBlock},
+        tensor::{DType, Tensor},
+    };
+
+    fn metal_context() -> Option<MetalContext> {
+        match MetalContext::new() {
+            Ok(context) => Some(context),
+            Err(TinyError::Metal(message)) => {
+                eprintln!("skipping Metal Transformer test: {message}");
+                None
+            }
+            Err(error) => panic!("failed to create Metal context: {error}"),
+        }
+    }
+
+    fn identity_linear(context: &MetalContext) -> Linear {
+        Linear::new(
+            Tensor::from_f32_slice(
+                context,
+                &[
+                    1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+                ],
+                &[4, 4],
+            )
+            .unwrap(),
+        )
+        .unwrap()
+    }
+
+    fn tiny_transformer(context: &MetalContext) -> Transformer {
+        let config = ModelConfig {
+            vocab_size: 5,
+            hidden_size: 4,
+            intermediate_size: 4,
+            num_layers: 1,
+            num_heads: 2,
+            max_seq_len: 8,
+            rms_norm_eps: 1e-5,
+            rope_theta: 10_000.0,
+        };
+        let embedding = Embedding::new(
+            Tensor::from_f32_slice(
+                context,
+                &[
+                    0.1, 0.2, 0.3, 0.4, 0.2, 0.3, 0.4, 0.5, -0.1, 0.3, 0.5, 0.2, 0.4, -0.2, 0.1,
+                    0.6, 0.5, 0.1, -0.3, 0.2,
+                ],
+                &[5, 4],
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let attention = SelfAttention::new(
+            identity_linear(context),
+            identity_linear(context),
+            identity_linear(context),
+            identity_linear(context),
+            RotaryEmbedding::new(context, 2, 8, 10_000.0).unwrap(),
+            2,
+        )
+        .unwrap();
+        let block = TransformerBlock::new(
+            RmsNorm::new(
+                Tensor::from_f32_slice(context, &[1.0; 4], &[4]).unwrap(),
+                1e-5,
+            )
+            .unwrap(),
+            attention,
+            RmsNorm::new(
+                Tensor::from_f32_slice(context, &[1.0; 4], &[4]).unwrap(),
+                1e-5,
+            )
+            .unwrap(),
+            Mlp::new(
+                identity_linear(context),
+                identity_linear(context),
+                identity_linear(context),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let final_norm = RmsNorm::new(
+            Tensor::from_f32_slice(context, &[1.0; 4], &[4]).unwrap(),
+            1e-5,
+        )
+        .unwrap();
+        let lm_head = Linear::new(
+            Tensor::from_f32_slice(
+                context,
+                &[
+                    0.1, 0.2, -0.1, 0.3, 0.2, -0.2, 0.4, 0.1, 0.3, 0.1, 0.2, -0.3, -0.1, 0.5, 0.2,
+                    0.4, 0.2, -0.1, 0.3, 0.1,
+                ],
+                &[4, 5],
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        Transformer::new(config, embedding, vec![block], final_norm, lm_head).unwrap()
+    }
+
+    fn assert_close(expected: &Tensor, actual: &Tensor, tolerance: f32) {
+        assert_eq!(expected.shape().dims(), actual.shape().dims());
+        for (expected, actual) in expected
+            .to_f32_vec()
+            .unwrap()
+            .iter()
+            .zip(actual.to_f32_vec().unwrap().iter())
+        {
+            let error = (expected - actual).abs();
+            assert!(
+                error < tolerance,
+                "Transformer logits mismatch: expected={expected}, actual={actual}, error={error}",
+            );
+        }
+    }
+
+    #[test]
+    fn f16_transformer_matches_f32_and_returns_finite_logits() {
+        let Some(context) = metal_context() else {
+            return;
+        };
+        let model = tiny_transformer(&context);
+        let expected = model.forward(&context, &[1, 2]).unwrap();
+        let model_f16 = model.to_dtype(&context, DType::F16).unwrap();
+        let actual = model_f16.forward(&context, &[1, 2]).unwrap();
+
+        assert_eq!(model.dtype(), DType::F32);
+        assert_eq!(model_f16.dtype(), DType::F16);
+        assert_eq!(actual.dtype(), DType::F16);
+        assert!(
+            actual
+                .to_f32_vec()
+                .unwrap()
+                .iter()
+                .all(|value| value.is_finite())
+        );
+        assert_close(&expected, &actual, 0.2);
+    }
+
+    #[test]
+    fn f16_transformer_uses_f16_cache_for_prefill_and_decode() {
+        let Some(context) = metal_context() else {
+            return;
+        };
+        let model_f16 = tiny_transformer(&context)
+            .to_dtype(&context, DType::F16)
+            .unwrap();
+        let mut cache = model_f16.new_kv_cache(&context).unwrap();
+        assert_eq!(cache.layer_mut(0).unwrap().dtype(), DType::F16);
+
+        let prefill = model_f16
+            .forward_with_cache(&context, &[1, 2, 3], &mut cache)
+            .unwrap();
+        assert_eq!(prefill.dtype(), DType::F16);
+        assert_eq!(cache.layer_mut(0).unwrap().len(), 3);
+
+        let decode = model_f16
+            .forward_with_cache(&context, &[4], &mut cache)
+            .unwrap();
+        assert_eq!(decode.dtype(), DType::F16);
+        assert!(
+            decode
+                .to_f32_vec()
+                .unwrap()
+                .iter()
+                .all(|value| value.is_finite())
+        );
+        assert_eq!(cache.layer_mut(0).unwrap().len(), 4);
+    }
 }
