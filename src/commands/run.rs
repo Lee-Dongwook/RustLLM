@@ -17,10 +17,21 @@ pub fn execute(args: RunArgs) -> Result<()> {
     eprintln!("loading model...");
 
     let model = Transformer::load(&context, &args.model)?;
-    let model = match args.dtype {
-        DTypeArg::F32 => model,
-        DTypeArg::F16 => model.to_dtype(&context, DType::F16)?,
+    let requested_dtype = match args.dtype {
+        DTypeArg::F32 => DType::F32,
+        DTypeArg::F16 => DType::F16,
     };
+    if model.dtype() != requested_dtype {
+        return Err(TinyError::ModelFormat(format!(
+            "model.bin stores {:?} weights, but --dtype {:?} was requested; re-import with `import --dtype {}`",
+            model.dtype(),
+            requested_dtype,
+            match requested_dtype {
+                DType::F32 => "f32",
+                DType::F16 => "f16",
+            },
+        )));
+    }
 
     eprintln!("model dtype: {:?}", model.dtype());
 

@@ -9,6 +9,7 @@ use crate::nn::{
 
 use crate::tensor::{DType, Tensor};
 
+use super::weights::WeightData;
 use super::{KvCache, ModelConfig, ModelWeights, WeightTensor};
 
 mod cache;
@@ -339,9 +340,12 @@ fn take_tensor(
         )));
     }
 
-    let (shape, data) = weight.into_parts();
+    let (shape, data) = weight.into_storage_parts();
 
-    Tensor::from_f32_slice(context, &data, &shape)
+    match data {
+        WeightData::F32(data) => Tensor::from_f32_slice(context, &data, &shape),
+        WeightData::F16(data) => Tensor::from_f16_slice(context, &data, &shape),
+    }
 }
 
 #[cfg(test)]

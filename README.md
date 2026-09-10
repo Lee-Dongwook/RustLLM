@@ -83,6 +83,15 @@ Hugging Face 모델을 `hf download <repo-id> --local-dir models/source/<model-n
 cargo run -- import --source path/to/source-model --output path/to/output-model
 ```
 
+F16 모델은 변환할 때 바로 저장합니다. 이렇게 만든 `model.bin`은 실행 중 F32 전체 모델을 GPU에서 F16으로 캐스팅하지 않고 F16 텐서로 직접 로드합니다.
+
+```bash
+cargo run -- import \
+  --source path/to/source-model \
+  --output path/to/output-model-f16 \
+  --dtype f16
+```
+
 입력 디렉터리에는 `config.json`과 `model.safetensors`가 필요합니다. 현재 변환기는 bias 없는 multi-head attention만 지원하며, `num_key_value_heads`가 `num_attention_heads`와 다른 GQA/MQA 모델 또는 bias 텐서가 있는 모델은 명확한 오류로 중단합니다.
 
 ## 명령어와 생성 옵션
@@ -108,7 +117,7 @@ cargo run -- run \\
   --metrics
 ```
 
-- `--dtype f32|f16`: 실행 시 모델을 F32 또는 F16으로 사용합니다. 기본값은 `f32`입니다.
+- `--dtype f32|f16`: `model.bin`에 저장된 가중치 dtype과 일치해야 합니다. 기본값은 `f32`이며, F16 모델은 `--dtype f16`으로 실행합니다. 실행 중 전체 모델 dtype 변환은 하지 않습니다.
 - `--max-tokens`: 생성할 최대 새 토큰 수입니다. 모델의 남은 context length를 넘지 않습니다.
 - `--temperature`: `0`이면 greedy decoding, 양수이면 확률 샘플링을 사용합니다.
 - `--top-k`, `--top-p`: 샘플링 후보를 각각 상위 K개 및 누적 확률 P로 제한합니다.

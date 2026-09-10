@@ -3,9 +3,10 @@ use std::{fs, path::Path};
 use tiny_metal_llm::{
     error::Result,
     import::{import_safetensors, load_llama_config, map_llama_weights},
+    tensor::DType,
 };
 
-use crate::cli::ImportArgs;
+use crate::cli::{DTypeArg, ImportArgs};
 
 pub fn execute(args: ImportArgs) -> Result<()> {
     let config_path = args.source.join("config.json");
@@ -32,9 +33,13 @@ pub fn execute(args: ImportArgs) -> Result<()> {
 
     config.save_json(args.output.join("config.json"))?;
 
-    weights.save(args.output.join("model.bin"))?;
+    let dtype = match args.dtype {
+        DTypeArg::F32 => DType::F32,
+        DTypeArg::F16 => DType::F16,
+    };
+    weights.save_as(args.output.join("model.bin"), dtype)?;
 
-    println!("model imported successfully");
+    println!("model imported successfully as {dtype:?}");
 
     println!("output: {}", args.output.display(),);
 

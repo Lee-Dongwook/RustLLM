@@ -61,6 +61,9 @@ pub struct ImportArgs {
 
     #[arg(long, short = 'o')]
     pub output: PathBuf,
+
+    #[arg(long, value_enum, default_value_t = DTypeArg::F32)]
+    pub dtype: DTypeArg,
 }
 
 #[derive(Debug, Args)]

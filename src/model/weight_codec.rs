@@ -1,8 +1,13 @@
 use super::{
     ModelWeights,
-    weights::{DTYPE_F32, MAGIC, MAX_NAME_LEN, MAX_RANK, VERSION, checked_numel},
+    weights::{
+        DTYPE_F16, DTYPE_F32, MAGIC, MAX_NAME_LEN, MAX_RANK, VERSION, WeightData, checked_numel,
+    },
 };
-use crate::error::{Result, TinyError};
+use crate::{
+    error::{Result, TinyError},
+    tensor::DType,
+};
 use std::{
     fs::File,
     io::{BufReader, BufWriter, Read, Write},
@@ -10,6 +15,10 @@ use std::{
 };
 
 pub(super) fn save(weights: &ModelWeights, path: impl AsRef<Path>) -> Result<()> {
+    save_as(weights, path, DType::F32)
+}
+
+pub(super) fn save_as(weights: &ModelWeights, path: impl AsRef<Path>, dtype: DType) -> Result<()> {
     let mut out = BufWriter::new(File::create(path)?);
     out.write_all(MAGIC)?;
     u32w(&mut out, VERSION)?;
@@ -29,7 +38,11 @@ pub(super) fn save(weights: &ModelWeights, path: impl AsRef<Path>) -> Result<()>
                 .map_err(|_| TinyError::ModelFormat(format!("weight name too long: {name}")))?,
         )?;
         out.write_all(b)?;
-        out.write_all(&[DTYPE_F32])?;
+        let dtype_tag = match dtype {
+            DType::F32 => DTYPE_F32,
+            DType::F16 => DTYPE_F16,
+        };
+        out.write_all(&[dtype_tag])?;
         u32w(
             &mut out,
             u32::try_from(t.shape.len())
@@ -38,9 +51,20 @@ pub(super) fn save(weights: &ModelWeights, path: impl AsRef<Path>) -> Result<()>
         for &d in &t.shape {
             u64w(&mut out, d as u64)?;
         }
-        u64w(&mut out, t.data.len() as u64)?;
-        for &v in &t.data {
-            out.write_all(&v.to_le_bytes())?;
+        u64w(&mut out, checked_numel(&t.shape)? as u64)?;
+        let data = match &t.data {
+            WeightData::F32(data) => data,
+            WeightData::F16(_) => {
+                return Err(TinyError::ModelFormat(format!(
+                    "cannot save non-F32 source weight {name}"
+                )));
+            }
+        };
+        for &v in data {
+            match dtype {
+                DType::F32 => out.write_all(&v.to_le_bytes())?,
+                DType::F16 => out.write_all(&half::f16::from_f32(v).to_le_bytes())?,
+            }
         }
     }
     out.flush()?;
@@ -72,7 +96,7 @@ pub(super) fn load(path: impl AsRef<Path>) -> Result<ModelWeights> {
             .map_err(|e| TinyError::ModelFormat(format!("invalid UTF-8 weight name: {e}")))?;
         let mut dtype = [0];
         input.read_exact(&mut dtype)?;
-        if dtype[0] != DTYPE_F32 {
+        if dtype[0] != DTYPE_F32 && dtype[0] != DTYPE_F16 {
             return Err(TinyError::ModelFormat(format!(
                 "unsupported dtype {} for weight {name}",
                 dtype[0]
@@ -103,22 +127,40 @@ pub(super) fn load(path: impl AsRef<Path>) -> Result<ModelWeights> {
                 "weight {name} declares an invalid element count"
             )));
         }
+        let element_size = match dtype[0] {
+            DTYPE_F32 => 4,
+            DTYPE_F16 => 2,
+            _ => unreachable!(),
+        };
         let mut bytes = vec![
             0;
-            count
-                .checked_mul(4)
-                .ok_or_else(|| TinyError::ModelFormat(format!(
-                    "weight byte size overflow: {name}"
-                )))?
+            count.checked_mul(element_size).ok_or_else(|| {
+                TinyError::ModelFormat(format!("weight byte size overflow: {name}"))
+            })?
         ];
         input.read_exact(&mut bytes)?;
-        let data = bytes
-            .as_chunks::<4>()
-            .0
-            .iter()
-            .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-            .collect();
-        weights.insert_f32(name, &shape, data)?;
+        let data = match dtype[0] {
+            DTYPE_F32 => WeightData::F32(
+                bytes
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+                    .collect(),
+            ),
+            DTYPE_F16 => WeightData::F16(
+                bytes
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|c| half::f16::from_le_bytes([c[0], c[1]]))
+                    .collect(),
+            ),
+            _ => unreachable!(),
+        };
+        weights
+            .tensors
+            .insert(name, super::WeightTensor { shape, data });
     }
     Ok(weights)
 }

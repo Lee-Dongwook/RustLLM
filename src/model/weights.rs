@@ -1,25 +1,44 @@
-use crate::error::{Result, TinyError};
+use crate::{
+    error::{Result, TinyError},
+    tensor::DType,
+};
 use std::{collections::HashMap, path::Path};
 
 pub(super) const MAGIC: &[u8; 8] = b"TMLLWGHT";
 pub(super) const VERSION: u32 = 1;
 pub(super) const DTYPE_F32: u8 = 1;
+pub(super) const DTYPE_F16: u8 = 2;
 pub(super) const MAX_RANK: u32 = 16;
 pub(super) const MAX_NAME_LEN: u32 = 1024;
 
 #[derive(Debug, Clone)]
 pub struct WeightTensor {
     pub(super) shape: Vec<usize>,
-    pub(super) data: Vec<f32>,
+    pub(super) data: WeightData,
+}
+
+#[derive(Debug, Clone)]
+pub(super) enum WeightData {
+    F32(Vec<f32>),
+    F16(Vec<half::f16>),
 }
 impl WeightTensor {
     pub fn shape(&self) -> &[usize] {
         &self.shape
     }
     pub fn data(&self) -> &[f32] {
-        &self.data
+        match &self.data {
+            WeightData::F32(data) => data,
+            WeightData::F16(_) => panic!("F16 weight does not expose F32 data"),
+        }
     }
     pub fn into_parts(self) -> (Vec<usize>, Vec<f32>) {
+        match self.data {
+            WeightData::F32(data) => (self.shape, data),
+            WeightData::F16(_) => panic!("F16 weight cannot be converted to F32 parts"),
+        }
+    }
+    pub(super) fn into_storage_parts(self) -> (Vec<usize>, WeightData) {
         (self.shape, self.data)
     }
 }
@@ -77,13 +96,16 @@ impl ModelWeights {
             name,
             WeightTensor {
                 shape: shape.to_vec(),
-                data,
+                data: WeightData::F32(data),
             },
         );
         Ok(())
     }
     pub fn save(&self, path: impl AsRef<Path>) -> Result<()> {
         super::weight_codec::save(self, path)
+    }
+    pub fn save_as(&self, path: impl AsRef<Path>, dtype: DType) -> Result<()> {
+        super::weight_codec::save_as(self, path, dtype)
     }
     pub fn load(path: impl AsRef<Path>) -> Result<Self> {
         super::weight_codec::load(path)
@@ -99,7 +121,8 @@ pub(super) fn checked_numel(shape: &[usize]) -> Result<usize> {
 
 #[cfg(test)]
 mod tests {
-    use super::ModelWeights;
+    use super::{ModelWeights, WeightData};
+    use crate::tensor::DType;
 
     #[test]
     fn saves_and_loads_a_weight_collection() {
@@ -119,5 +142,30 @@ mod tests {
             loaded.get("layer.weight").unwrap().data(),
             &[1.0, 2.0, 3.0, 4.0]
         );
+    }
+
+    #[test]
+    fn saves_and_loads_f16_weight_collection() {
+        let mut weights = ModelWeights::new();
+        weights
+            .insert_f32("layer.weight", &[2, 2], vec![1.0, -2.0, 0.5, 3.25])
+            .unwrap();
+
+        let path = std::env::temp_dir().join(format!(
+            "tiny-metal-llm-weights-f16-{}.bin",
+            std::process::id()
+        ));
+        weights.save_as(&path, DType::F16).unwrap();
+        let loaded = ModelWeights::load(&path).unwrap();
+        std::fs::remove_file(&path).unwrap();
+
+        assert_eq!(loaded.get("layer.weight").unwrap().shape(), &[2, 2]);
+        match &loaded.get("layer.weight").unwrap().data {
+            WeightData::F16(data) => assert_eq!(
+                data.iter().map(|value| value.to_f32()).collect::<Vec<_>>(),
+                vec![1.0, -2.0, 0.5, 3.25]
+            ),
+            WeightData::F32(_) => panic!("expected F16 weights"),
+        }
     }
 }

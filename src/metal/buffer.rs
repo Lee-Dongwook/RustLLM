@@ -72,6 +72,42 @@ impl MetalBuffer {
         }
     }
 
+    pub fn from_i8_slice(context: &MetalContext, data: &[i8]) -> Self {
+        assert!(
+            !data.is_empty(),
+            "빈 데이터로 MetalBuffer를 만들 수 없습니다."
+        );
+        let byte_len = std::mem::size_of_val(data);
+        let raw = context.device.new_buffer_with_data(
+            data.as_ptr() as *const c_void,
+            byte_len as u64,
+            MTLResourceOptions::StorageModeShared,
+        );
+        Self {
+            raw,
+            len: data.len(),
+            byte_len,
+        }
+    }
+
+    pub fn from_u8_slice(context: &MetalContext, data: &[u8]) -> Self {
+        assert!(
+            !data.is_empty(),
+            "빈 데이터로 MetalBuffer를 만들 수 없습니다."
+        );
+        let byte_len = std::mem::size_of_val(data);
+        let raw = context.device.new_buffer_with_data(
+            data.as_ptr() as *const c_void,
+            byte_len as u64,
+            MTLResourceOptions::StorageModeShared,
+        );
+        Self {
+            raw,
+            len: data.len(),
+            byte_len,
+        }
+    }
+
     pub fn empty(context: &MetalContext, len: usize) -> Self {
         assert!(len > 0, "길이가 0인 MetalBuffer는 만들 수 없습니다.");
 
