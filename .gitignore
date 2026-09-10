@@ -19,3 +19,9 @@
 # Environment files
 .env
 .env.*
+
+# Downloaded and converted model artifacts
+# Keep only models/tiny, which is a 1.5 KB test fixture committed to this repo.
+/models/*
+!/models/tiny/
+!/models/tiny/**

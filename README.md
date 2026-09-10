@@ -2,7 +2,7 @@
 
 Apple Metal GPU에서 소형 Transformer 언어 모델의 **추론 과정**을 직접 구현해 보는 Rust 프로젝트입니다. 텐서 연산, Metal 커널, Transformer 블록, Llama 가중치 로딩, SentencePiece 토크나이저, greedy 토큰 생성을 한 저장소에서 다룹니다.
 
-`models/tiny`는 내부 추론 경로 확인을 위한 매우 작은 예제 모델입니다. 실제 영어 이야기 생성은 `tinystories-llama-15m` 모델을 사용합니다.
+`models/tiny`는 내부 추론 경로 확인을 위한 매우 작은 예제 모델입니다. Hugging Face에서 받거나 변환한 실제 모델은 Git에 포함하지 않으며, 각 개발자가 아래 방법으로 내려받습니다.
 
 ## 현재 구현된 기능
 
@@ -31,18 +31,25 @@ Apple Metal GPU에서 소형 Transformer 언어 모델의 **추론 과정**을 �
 
 저장소 루트에서 실행합니다.
 
-처음 실행하거나 `models/tinystories-llama-15m`에 `tokenizer.model`이 없다면, 먼저 아래 명령으로 모델을 변환합니다.
+먼저 Hugging Face CLI를 설치하고 모델을 내려받습니다. 예시는 현재 확인한 110M 모델 기준입니다.
+
+```bash
+uv tool install "huggingface_hub[cli]"
+hf download Xenova/llama2.c-stories110M --local-dir models/source/llama2.c-stories110M
+```
+
+그 다음 프로젝트 내부 포맷으로 변환합니다.
 
 ```bash
 cargo run -- import \\
-  --source models/source/tinystories-llama-15m \\
-  --output models/tinystories-llama-15m
+  --source models/source/llama2.c-stories110M \\
+  --output models/llama2.c-stories110M
 ```
 
 변환 후 생성 명령을 실행합니다.
 
 ```bash
-cargo run -- run --model models/tinystories-llama-15m --prompt "Once upon a time" --max-tokens 64
+cargo run -- run --model models/llama2.c-stories110M --prompt "Once upon a time" --max-tokens 64
 ```
 
 이 명령은 아래 전체 경로를 실행합니다.
@@ -52,7 +59,7 @@ cargo run -- run --model models/tinystories-llama-15m --prompt "Once upon a time
         ↓
 SentencePiece encode (BOS 포함)
         ↓
-TinyStories 15M 가중치 + Rust Transformer + Metal kernels
+TinyStories 110M 가중치 + Rust Transformer + Metal kernels
         ↓
 생성된 token IDs (EOS면 종료)
         ↓
@@ -65,11 +72,7 @@ SentencePiece decode
 
 ## Hugging Face 모델 변환
 
-```bash
-cargo run -- import \\
-  --source models/source/tinystories-llama-15m \\
-  --output models/tinystories-llama-15m
-```
+Hugging Face 모델을 `hf download <repo-id> --local-dir models/source/<model-name>`으로 내려받은 뒤 변환합니다. 모델 파일은 의도적으로 `.gitignore`에 포함되어 있으므로 Git에 추가하지 않습니다.
 
 변환기는 Llama config/safetensors를 내부 포맷으로 바꾸고 `config.json`, `model.bin`, `tokenizer.model`, `tokenizer_config.json`, `special_tokens_map.json`을 출력 폴더에 준비합니다.
 
@@ -101,8 +104,10 @@ cargo run -- import --source path/to/source-model --output path/to/output-model
 ```text
 .
 ├── kernels/             # Metal compute shader 소스
-├── models/source/       # Hugging Face 형식 Llama 입력 모델
-├── models/tinystories-llama-15m/
+├── models/              # 로컬 모델 저장소 (Git 제외)
+│   ├── source/          # Hugging Face 형식 Llama 입력 모델
+│   └── <model-name>/    # 변환된 내부 모델
+├── models/tiny/         # Git에 포함되는 1.5 KB 테스트 픽스처
 │   ├── config.json      # 변환된 내부 모델 설정
 │   ├── model.bin        # 변환된 가중치
 │   ├── tokenizer.model
@@ -155,10 +160,10 @@ models/<model-name>/
 
 ```bash
 cargo test
-cargo run -- run --model models/tinystories-llama-15m --prompt "Once upon a time"
+cargo run -- run --model models/llama2.c-stories110M --prompt "Once upon a time"
 ```
 
-`cargo test`는 KV Cache 초기화, 가중치 파일 저장·로드 round trip, 그리고 포함된 TinyStories SentencePiece 모델의 encode/decode round trip을 확인합니다. `run`은 Apple Metal GPU가 필요합니다.
+`cargo test`는 KV Cache 초기화와 가중치 파일 저장·로드 round trip을 확인합니다. Hugging Face 모델이 필요한 SentencePiece 통합 테스트는 모델을 내려받은 뒤 `cargo test -- --ignored`로 실행합니다. `run`은 Apple Metal GPU가 필요합니다.
 
 `import` 실행 시에는 `source tensors`, `converted tensors`, `copied tokenizer.model`이 출력되는지 확인합니다. 문제가 생기면 아래를 우선 확인하세요.
 

@@ -68,7 +68,6 @@ kernel void rope_f16(
     device const float* cos_table [[buffer(1)]],
     device const float* sin_table [[buffer(2)]],
     device half* output [[buffer(3)]],
-    device half* output [[buffer(3)]],
     constant uint& seq_len [[buffer(4)]],
     constant uint& head_dim [[buffer(5)]],
     constant uint& half_dim [[buffer(6)]],

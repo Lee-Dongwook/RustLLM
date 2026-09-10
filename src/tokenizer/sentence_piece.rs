@@ -146,9 +146,10 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires a locally downloaded Hugging Face model"]
     fn encodes_and_decodes_a_tiny_stories_prompt() {
         let tokenizer = SentencePieceTokenizer::from_model_dir(tiny_stories_model_dir())
-            .expect("bundled TinyStories tokenizer should load");
+            .expect("locally downloaded TinyStories tokenizer should load");
 
         let ids = tokenizer
             .encode("Once upon a time")
