@@ -91,3 +91,72 @@ pub fn embedding_f32(
 
     Ok(output)
 }
+
+pub fn embedding_f16(
+    context: &MetalContext,
+    weight: &MetalBuffer,
+    token_ids: &[u32],
+    vocab_size: usize,
+    hidden_size: usize,
+) -> Result<MetalBuffer> {
+    if token_ids.is_empty() {
+        return Err(TinyError::InvalidShape(
+            "embedding requires at least one token".to_string(),
+        ));
+    }
+
+    if weight.len() != vocab_size * hidden_size || weight.byte_len() != weight.len() * 2 {
+        return Err(TinyError::InvalidShape(format!(
+            "F16 embedding weight has {} elements ({} bytes), expected {} F16 elements for shape [{vocab_size}, {hidden_size}]",
+            weight.len(),
+            weight.byte_len(),
+            vocab_size * hidden_size,
+        )));
+    }
+
+    for &token_id in token_ids {
+        if token_id as usize >= vocab_size {
+            return Err(TinyError::InvalidTokenId {
+                token_id,
+                vocab_size,
+            });
+        }
+    }
+
+    let token_buffer = MetalBuffer::from_u32_slice(context, token_ids);
+    let output_elements = token_ids.len() * hidden_size;
+    let output = MetalBuffer::empty_with_element_size(context, output_elements, 2);
+    let pipeline = context.pipeline(
+        include_str!("../../kernels/embedding.metal"),
+        "embedding_f16",
+    );
+    let command_buffer = context.command_queue.new_command_buffer();
+    let encoder = command_buffer.new_compute_command_encoder();
+    encoder.set_compute_pipeline_state(pipeline.as_ref());
+    encoder.set_buffer(0, Some(weight.raw()), 0);
+    encoder.set_buffer(1, Some(token_buffer.raw()), 0);
+    encoder.set_buffer(2, Some(output.raw()), 0);
+
+    let hidden_size = u32::try_from(hidden_size)
+        .map_err(|_| TinyError::InvalidShape("hidden size exceeds u32".to_string()))?;
+    let output_elements_u32 = u32::try_from(output_elements)
+        .map_err(|_| TinyError::InvalidShape("embedding output size exceeds u32".to_string()))?;
+    encoder.set_bytes(
+        3,
+        mem::size_of::<u32>() as u64,
+        &hidden_size as *const u32 as *const c_void,
+    );
+    encoder.set_bytes(
+        4,
+        mem::size_of::<u32>() as u64,
+        &output_elements_u32 as *const u32 as *const c_void,
+    );
+    encoder.dispatch_threads(
+        MTLSize::new(output_elements as u64, 1, 1),
+        MTLSize::new(output_elements.min(256) as u64, 1, 1),
+    );
+    encoder.end_encoding();
+    command_buffer.commit();
+    command_buffer.wait_until_completed();
+    Ok(output)
+}
