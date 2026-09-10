@@ -10,3 +10,12 @@ kernel void vector_add(
 ) {
     result[id] = a[id] + b[id];
 }
+
+kernel void vector_add_f16(
+    device const half* a [[buffer(0)]],
+    device const half* b [[buffer(1)]],
+    device half* result [[buffer(2)]],
+    uint id [[thread_position_in_grid]]
+) {
+    result[id] = half(float(a[id]) + float(b[id]));
+}

@@ -1,16 +1,25 @@
 use crate::{
     error::{Result, TinyError},
     metal::MetalContext,
-    ops::{add_f32, mul_f16, mul_f32, silu_f16, silu_f32},
+    ops::{add_f16, add_f32, mul_f16, mul_f32, silu_f16, silu_f32},
 };
 
 use super::{DType, Tensor};
 
 impl Tensor {
     pub fn add(&self, context: &MetalContext, rhs: &Tensor) -> Result<Self> {
-        self.require_f32("add")?;
-        rhs.require_f32("add")?;
-        self.binary_elementwise(context, rhs, add_f32, DType::F32)
+        if self.dtype() != rhs.dtype() {
+            return Err(TinyError::UnsupportedDType(format!(
+                "add dtype mismatch: {:?} vs {:?}",
+                self.dtype(),
+                rhs.dtype(),
+            )));
+        }
+
+        match self.dtype() {
+            DType::F32 => self.binary_elementwise(context, rhs, add_f32, DType::F32),
+            DType::F16 => self.binary_elementwise(context, rhs, add_f16, DType::F16),
+        }
     }
 
     pub fn mul(&self, context: &MetalContext, rhs: &Tensor) -> Result<Self> {
@@ -69,15 +78,5 @@ impl Tensor {
             self.shape().dims(),
             dtype,
         )
-    }
-
-    pub(super) fn require_f32(&self, operation: &str) -> Result<()> {
-        if self.dtype() != DType::F32 {
-            return Err(TinyError::UnsupportedDType(format!(
-                "{operation} supports only F32, got {:?}",
-                self.dtype()
-            )));
-        }
-        Ok(())
     }
 }

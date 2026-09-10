@@ -44,3 +44,35 @@ pub fn add_f32(context: &MetalContext, a: &MetalBuffer, b: &MetalBuffer) -> Resu
 
     Ok(output)
 }
+
+pub fn add_f16(context: &MetalContext, a: &MetalBuffer, b: &MetalBuffer) -> Result<MetalBuffer> {
+    if a.len() != b.len() || a.byte_len() != a.len() * 2 || b.byte_len() != b.len() * 2 {
+        return Err(TinyError::InvalidShape(format!(
+            "F16 add requires equal F16 buffers, got {} elements/{} bytes and {} elements/{} bytes",
+            a.len(),
+            a.byte_len(),
+            b.len(),
+            b.byte_len(),
+        )));
+    }
+
+    let output = MetalBuffer::empty_with_element_size(context, a.len(), 2);
+    let pipeline = context.pipeline(
+        include_str!("../../kernels/vector_add.metal"),
+        "vector_add_f16",
+    );
+    let command_buffer = context.command_queue.new_command_buffer();
+    let encoder = command_buffer.new_compute_command_encoder();
+    encoder.set_compute_pipeline_state(pipeline.as_ref());
+    encoder.set_buffer(0, Some(a.raw()), 0);
+    encoder.set_buffer(1, Some(b.raw()), 0);
+    encoder.set_buffer(2, Some(output.raw()), 0);
+    encoder.dispatch_threads(
+        MTLSize::new(a.len() as u64, 1, 1),
+        MTLSize::new(a.len().min(256) as u64, 1, 1),
+    );
+    encoder.end_encoding();
+    command_buffer.commit();
+    command_buffer.wait_until_completed();
+    Ok(output)
+}

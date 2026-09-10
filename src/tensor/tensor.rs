@@ -708,6 +708,25 @@ mod tests {
     }
 
     #[test]
+    fn f16_add_uses_f16_storage_and_matches_expected_values() {
+        let Some(context) = metal_context() else {
+            return;
+        };
+        let left = Tensor::from_f32_slice(&context, &[1.0, 2.0, 3.0, 4.0], &[2, 2])
+            .unwrap()
+            .to_dtype(&context, DType::F16)
+            .unwrap();
+        let right = Tensor::from_f32_slice(&context, &[0.5, 1.5, -1.0, 2.0], &[2, 2])
+            .unwrap()
+            .to_dtype(&context, DType::F16)
+            .unwrap();
+
+        let output = left.add(&context, &right).unwrap();
+        assert_eq!(output.dtype(), DType::F16);
+        assert_eq!(output.to_f32_vec().unwrap(), vec![1.5, 3.5, 2.0, 6.0]);
+    }
+
+    #[test]
     fn f16_batched_matmul_materializes_transposed_attention_keys() {
         let Some(context) = metal_context() else {
             return;

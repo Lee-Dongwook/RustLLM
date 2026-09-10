@@ -50,6 +50,10 @@ impl Mlp {
         self.down_proj.out_features()
     }
 
+    pub fn dtype(&self) -> DType {
+        self.gate_proj.dtype()
+    }
+
     pub fn to_dtype(&self, context: &MetalContext, dtype: DType) -> Result<Self> {
         Ok(Self {
             gate_proj: self.gate_proj.to_dtype(context, dtype)?,
