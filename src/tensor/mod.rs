@@ -1,6 +1,7 @@
 mod device;
 mod dtype;
 mod elementwise;
+mod gqa_matmul;
 mod repeat_kv;
 mod shape;
 mod storage;

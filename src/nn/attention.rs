@@ -237,15 +237,13 @@ impl SelfAttention {
         let all_k = cache.key()?;
         let all_v = cache.value()?;
 
-        // Cache stays compact at KV-head count; only the tensors used by the
-        // existing attention matmuls are materialized to query-head count.
-        let groups = self.num_kv_groups();
-        let attention_k = all_k.repeat_kv(context, groups)?;
-        let attention_v = all_v.repeat_kv(context, groups)?;
-
-        let k_transposed = attention_k.transpose(2, 3)?;
-
-        let scores = q.batched_matmul(context, &k_transposed)?;
+        let is_gqa = self.num_heads != self.num_kv_heads;
+        let scores = if is_gqa {
+            q.gqa_qk_matmul(context, &all_k)?
+        } else {
+            let k_transposed = all_k.transpose(2, 3)?;
+            q.batched_matmul(context, &k_transposed)?
+        };
 
         let scale = 1.0f32 / (self.head_dim as f32).sqrt();
 
@@ -253,7 +251,11 @@ impl SelfAttention {
 
         let probabilities = scores.softmax_last_dim(context)?;
 
-        let attention = probabilities.batched_matmul(context, &attention_v)?;
+        let attention = if is_gqa {
+            probabilities.gqa_pv_matmul(context, &all_v)?
+        } else {
+            probabilities.batched_matmul(context, &all_v)?
+        };
         let attention = attention.permute(&[0, 2, 1, 3])?.contiguous(context)?;
 
         let attention = attention.reshape(&[seq_len, self.hidden_size])?;
@@ -404,7 +406,7 @@ mod tests {
     }
 
     #[test]
-    fn gqa_forward_materializes_cached_kv_heads_for_attention() {
+    fn gqa_forward_uses_compact_cached_kv_heads() {
         let Some(context) = metal_context() else {
             return;
         };

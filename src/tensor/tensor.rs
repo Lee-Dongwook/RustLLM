@@ -3,7 +3,7 @@ use crate::ops::{
     cast, materialize_contiguous_f16, materialize_contiguous_f32, matmul_f16, matmul_f32,
     softmax_f16, softmax_f32,
 };
-use crate::tensor::repeat_kv;
+use crate::tensor::{gqa_matmul, repeat_kv};
 use std::sync::Arc;
 
 use crate::error::{Result, TinyError};
@@ -609,6 +609,14 @@ impl Tensor {
     pub fn repeat_kv(&self, context: &MetalContext, repeats: usize) -> Result<Self> {
         repeat_kv::repeat_kv(context, self, repeats)
     }
+
+    pub fn gqa_qk_matmul(&self, context: &MetalContext, key: &Tensor) -> Result<Self> {
+        gqa_matmul::gqa_qk_matmul(context, self, key)
+    }
+
+    pub fn gqa_pv_matmul(&self, context: &MetalContext, value: &Tensor) -> Result<Self> {
+        gqa_matmul::gqa_pv_matmul(context, self, value)
+    }
 }
 
 #[cfg(test)]
@@ -725,6 +733,77 @@ mod tests {
 
         assert_eq!(output.shape().dims(), input.shape().dims());
         assert_eq!(output.to_f32_vec().unwrap(), input.to_f32_vec().unwrap());
+    }
+
+    fn assert_close(expected: &Tensor, actual: &Tensor, tolerance: f32) {
+        assert_eq!(expected.shape().dims(), actual.shape().dims());
+        for (expected, actual) in expected
+            .to_f32_vec()
+            .unwrap()
+            .iter()
+            .zip(actual.to_f32_vec().unwrap().iter())
+        {
+            let error = (expected - actual).abs();
+            assert!(
+                error < tolerance,
+                "GQA result mismatch: expected={expected}, actual={actual}, error={error}",
+            );
+        }
+    }
+
+    #[test]
+    fn gqa_qk_matches_repeated_kv_for_f32_and_f16() {
+        let Some(context) = metal_context() else {
+            return;
+        };
+        let q_data: Vec<f32> = (0..48).map(|index| (index as f32 - 20.0) / 13.0).collect();
+        let k_data: Vec<f32> = (0..24).map(|index| (index as f32 - 11.0) / 7.0).collect();
+        let q = Tensor::from_f32_slice(&context, &q_data, &[1, 6, 2, 4]).unwrap();
+        let k = Tensor::from_f32_slice(&context, &k_data, &[1, 2, 3, 4]).unwrap();
+
+        for dtype in [DType::F32, DType::F16] {
+            let q = q.to_dtype(&context, dtype).unwrap();
+            let k = k.to_dtype(&context, dtype).unwrap();
+            let expected = q
+                .batched_matmul(
+                    &context,
+                    &k.repeat_kv(&context, 3).unwrap().transpose(2, 3).unwrap(),
+                )
+                .unwrap();
+            let actual = q.gqa_qk_matmul(&context, &k).unwrap();
+            assert_eq!(actual.dtype(), dtype);
+            assert_close(
+                &expected,
+                &actual,
+                if dtype == DType::F32 { 1e-4 } else { 0.05 },
+            );
+        }
+    }
+
+    #[test]
+    fn gqa_pv_matches_repeated_kv_for_f32_and_f16() {
+        let Some(context) = metal_context() else {
+            return;
+        };
+        let probs_data: Vec<f32> = (0..36).map(|index| (index as f32 + 1.0) / 100.0).collect();
+        let value_data: Vec<f32> = (0..24).map(|index| (index as f32 - 9.0) / 8.0).collect();
+        let probs = Tensor::from_f32_slice(&context, &probs_data, &[1, 6, 2, 3]).unwrap();
+        let value = Tensor::from_f32_slice(&context, &value_data, &[1, 2, 3, 4]).unwrap();
+
+        for dtype in [DType::F32, DType::F16] {
+            let probs = probs.to_dtype(&context, dtype).unwrap();
+            let value = value.to_dtype(&context, dtype).unwrap();
+            let expected = probs
+                .batched_matmul(&context, &value.repeat_kv(&context, 3).unwrap())
+                .unwrap();
+            let actual = probs.gqa_pv_matmul(&context, &value).unwrap();
+            assert_eq!(actual.dtype(), dtype);
+            assert_close(
+                &expected,
+                &actual,
+                if dtype == DType::F32 { 1e-4 } else { 0.05 },
+            );
+        }
     }
 
     #[test]
