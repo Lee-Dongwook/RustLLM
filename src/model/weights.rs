@@ -8,6 +8,7 @@ pub(super) const MAGIC: &[u8; 8] = b"TMLLWGHT";
 pub(super) const VERSION: u32 = 1;
 pub(super) const DTYPE_F32: u8 = 1;
 pub(super) const DTYPE_F16: u8 = 2;
+pub(super) const DTYPE_I8: u8 = 3;
 pub(super) const MAX_RANK: u32 = 16;
 pub(super) const MAX_NAME_LEN: u32 = 1024;
 
@@ -21,6 +22,7 @@ pub struct WeightTensor {
 pub(super) enum WeightData {
     F32(Vec<f32>),
     F16(Vec<half::f16>),
+    I8(Vec<i8>),
 }
 impl WeightTensor {
     pub fn shape(&self) -> &[usize] {
@@ -30,12 +32,14 @@ impl WeightTensor {
         match &self.data {
             WeightData::F32(data) => data,
             WeightData::F16(_) => panic!("F16 weight does not expose F32 data"),
+            WeightData::I8(_) => panic!("INT8 weight does not expose F32 data"),
         }
     }
     pub fn into_parts(self) -> (Vec<usize>, Vec<f32>) {
         match self.data {
             WeightData::F32(data) => (self.shape, data),
             WeightData::F16(_) => panic!("F16 weight cannot be converted to F32 parts"),
+            WeightData::I8(_) => panic!("INT8 weight cannot be converted to F32 parts"),
         }
     }
     pub(super) fn into_storage_parts(self) -> (Vec<usize>, WeightData) {
@@ -97,6 +101,32 @@ impl ModelWeights {
             WeightTensor {
                 shape: shape.to_vec(),
                 data: WeightData::F32(data),
+            },
+        );
+        Ok(())
+    }
+    pub fn insert_i8(
+        &mut self,
+        name: impl Into<String>,
+        shape: &[usize],
+        data: Vec<i8>,
+    ) -> Result<()> {
+        let name = name.into();
+        if name.is_empty()
+            || shape.is_empty()
+            || shape.contains(&0)
+            || data.len() != checked_numel(shape)?
+            || self.tensors.contains_key(&name)
+        {
+            return Err(TinyError::ModelFormat(format!(
+                "invalid or duplicate INT8 weight: {name}"
+            )));
+        }
+        self.tensors.insert(
+            name,
+            WeightTensor {
+                shape: shape.to_vec(),
+                data: WeightData::I8(data),
             },
         );
         Ok(())
@@ -166,6 +196,7 @@ mod tests {
                 vec![1.0, -2.0, 0.5, 3.25]
             ),
             WeightData::F32(_) => panic!("expected F16 weights"),
+            WeightData::I8(_) => panic!("expected F16 weights"),
         }
     }
 }

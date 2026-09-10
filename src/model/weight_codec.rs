@@ -1,7 +1,8 @@
 use super::{
     ModelWeights,
     weights::{
-        DTYPE_F16, DTYPE_F32, MAGIC, MAX_NAME_LEN, MAX_RANK, VERSION, WeightData, checked_numel,
+        DTYPE_F16, DTYPE_F32, DTYPE_I8, MAGIC, MAX_NAME_LEN, MAX_RANK, VERSION, WeightData,
+        checked_numel,
     },
 };
 use crate::{
@@ -38,9 +39,12 @@ pub(super) fn save_as(weights: &ModelWeights, path: impl AsRef<Path>, dtype: DTy
                 .map_err(|_| TinyError::ModelFormat(format!("weight name too long: {name}")))?,
         )?;
         out.write_all(b)?;
-        let dtype_tag = match dtype {
-            DType::F32 => DTYPE_F32,
-            DType::F16 => DTYPE_F16,
+        let dtype_tag = match &t.data {
+            WeightData::I8(_) => DTYPE_I8,
+            _ => match dtype {
+                DType::F32 => DTYPE_F32,
+                DType::F16 => DTYPE_F16,
+            },
         };
         out.write_all(&[dtype_tag])?;
         u32w(
@@ -58,6 +62,12 @@ pub(super) fn save_as(weights: &ModelWeights, path: impl AsRef<Path>, dtype: DTy
                 return Err(TinyError::ModelFormat(format!(
                     "cannot save non-F32 source weight {name}"
                 )));
+            }
+            WeightData::I8(data) => {
+                out.write_all(unsafe {
+                    std::slice::from_raw_parts(data.as_ptr() as *const u8, data.len())
+                })?;
+                continue;
             }
         };
         for &v in data {
@@ -96,7 +106,7 @@ pub(super) fn load(path: impl AsRef<Path>) -> Result<ModelWeights> {
             .map_err(|e| TinyError::ModelFormat(format!("invalid UTF-8 weight name: {e}")))?;
         let mut dtype = [0];
         input.read_exact(&mut dtype)?;
-        if dtype[0] != DTYPE_F32 && dtype[0] != DTYPE_F16 {
+        if dtype[0] != DTYPE_F32 && dtype[0] != DTYPE_F16 && dtype[0] != DTYPE_I8 {
             return Err(TinyError::ModelFormat(format!(
                 "unsupported dtype {} for weight {name}",
                 dtype[0]
@@ -130,6 +140,7 @@ pub(super) fn load(path: impl AsRef<Path>) -> Result<ModelWeights> {
         let element_size = match dtype[0] {
             DTYPE_F32 => 4,
             DTYPE_F16 => 2,
+            DTYPE_I8 => 1,
             _ => unreachable!(),
         };
         let mut bytes = vec![
@@ -156,6 +167,7 @@ pub(super) fn load(path: impl AsRef<Path>) -> Result<ModelWeights> {
                     .map(|c| half::f16::from_le_bytes([c[0], c[1]]))
                     .collect(),
             ),
+            DTYPE_I8 => WeightData::I8(bytes.into_iter().map(|v| v as i8).collect()),
             _ => unreachable!(),
         };
         weights

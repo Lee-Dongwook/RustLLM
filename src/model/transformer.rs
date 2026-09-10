@@ -345,6 +345,9 @@ fn take_tensor(
     match data {
         WeightData::F32(data) => Tensor::from_f32_slice(context, &data, &shape),
         WeightData::F16(data) => Tensor::from_f16_slice(context, &data, &shape),
+        WeightData::I8(_) => Err(TinyError::ModelFormat(format!(
+            "INT8 weight {name} must be loaded through QuantizedLinear"
+        ))),
     }
 }
 
