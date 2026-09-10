@@ -1,6 +1,7 @@
 mod device;
 mod dtype;
 mod elementwise;
+mod repeat_kv;
 mod shape;
 mod storage;
 mod strides;

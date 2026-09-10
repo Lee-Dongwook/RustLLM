@@ -3,6 +3,7 @@ use crate::ops::{
     cast, materialize_contiguous_f16, materialize_contiguous_f32, matmul_f16, matmul_f32,
     softmax_f16, softmax_f32,
 };
+use crate::tensor::repeat_kv;
 use std::sync::Arc;
 
 use crate::error::{Result, TinyError};
@@ -604,6 +605,10 @@ impl Tensor {
             dtype,
         })
     }
+
+    pub fn repeat_kv(&self, context: &MetalContext, repeats: usize) -> Result<Self> {
+        repeat_kv::repeat_kv(context, self, repeats)
+    }
 }
 
 #[cfg(test)]
@@ -677,6 +682,49 @@ mod tests {
                 "F16 softmax mismatch: expected={expected}, actual={actual}, error={error}",
             );
         }
+    }
+
+    #[test]
+    fn repeat_kv_repeats_each_kv_head_for_f32_and_f16() {
+        let Some(context) = metal_context() else {
+            return;
+        };
+        let input = Tensor::from_f32_slice(
+            &context,
+            &[1., 2., 3., 4., 10., 20., 30., 40.],
+            &[1, 2, 2, 2],
+        )
+        .unwrap();
+        let expected = vec![
+            1., 2., 3., 4., 1., 2., 3., 4., 1., 2., 3., 4., 10., 20., 30., 40., 10., 20., 30., 40.,
+            10., 20., 30., 40.,
+        ];
+
+        let output = input.repeat_kv(&context, 3).unwrap();
+        assert_eq!(output.shape().dims(), &[1, 6, 2, 2]);
+        assert_eq!(output.to_f32_vec().unwrap(), expected);
+
+        let output_f16 = input
+            .to_dtype(&context, DType::F16)
+            .unwrap()
+            .repeat_kv(&context, 3)
+            .unwrap();
+        assert_eq!(output_f16.dtype(), DType::F16);
+        assert_eq!(output_f16.shape().dims(), &[1, 6, 2, 2]);
+        assert_eq!(output_f16.to_f32_vec().unwrap(), expected);
+    }
+
+    #[test]
+    fn repeat_kv_with_one_returns_the_original_tensor() {
+        let Some(context) = metal_context() else {
+            return;
+        };
+        let input = Tensor::from_f32_slice(&context, &[1., 2., 3., 4.], &[1, 1, 2, 2]).unwrap();
+
+        let output = input.repeat_kv(&context, 1).unwrap();
+
+        assert_eq!(output.shape().dims(), input.shape().dims());
+        assert_eq!(output.to_f32_vec().unwrap(), input.to_f32_vec().unwrap());
     }
 
     #[test]

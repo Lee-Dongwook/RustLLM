@@ -235,10 +235,15 @@ impl SelfAttention {
         cache.append(context, k, v)?;
 
         let all_k = cache.key()?;
-
         let all_v = cache.value()?;
 
-        let k_transposed = all_k.transpose(2, 3)?;
+        // Cache stays compact at KV-head count; only the tensors used by the
+        // existing attention matmuls are materialized to query-head count.
+        let groups = self.num_kv_groups();
+        let attention_k = all_k.repeat_kv(context, groups)?;
+        let attention_v = all_v.repeat_kv(context, groups)?;
+
+        let k_transposed = attention_k.transpose(2, 3)?;
 
         let scores = q.batched_matmul(context, &k_transposed)?;
 
@@ -248,7 +253,7 @@ impl SelfAttention {
 
         let probabilities = scores.softmax_last_dim(context)?;
 
-        let attention = probabilities.batched_matmul(context, &all_v)?;
+        let attention = probabilities.batched_matmul(context, &attention_v)?;
         let attention = attention.permute(&[0, 2, 1, 3])?.contiguous(context)?;
 
         let attention = attention.reshape(&[seq_len, self.hidden_size])?;
@@ -396,6 +401,35 @@ mod tests {
                 .dims(),
             &[1, 1, 2, 4]
         );
+    }
+
+    #[test]
+    fn gqa_forward_materializes_cached_kv_heads_for_attention() {
+        let Some(context) = metal_context() else {
+            return;
+        };
+
+        let q_and_out = Tensor::from_f32_slice(&context, &vec![0.0; 12 * 12], &[12, 12]).unwrap();
+        let kv = Tensor::from_f32_slice(&context, &vec![0.0; 12 * 4], &[12, 4]).unwrap();
+        let attention = SelfAttention::new(
+            Linear::new(q_and_out.clone()).unwrap(),
+            Linear::new(kv.clone()).unwrap(),
+            Linear::new(kv).unwrap(),
+            Linear::new(q_and_out).unwrap(),
+            RotaryEmbedding::new(&context, 4, 8, 10_000.0).unwrap(),
+            3,
+            1,
+        )
+        .unwrap();
+        let input = Tensor::from_f32_slice(&context, &[0.0; 24], &[2, 12]).unwrap();
+        let mut cache = LayerKvCache::new(&context, 1, 8, 4, DType::F32).unwrap();
+
+        let output = attention
+            .forward_with_cache(&context, &input, &mut cache)
+            .unwrap();
+
+        assert_eq!(cache.key().unwrap().shape().dims(), &[1, 1, 2, 4]);
+        assert_eq!(output.shape().dims(), &[2, 12]);
     }
 
     #[test]

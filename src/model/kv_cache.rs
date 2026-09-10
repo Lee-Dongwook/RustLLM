@@ -10,29 +10,29 @@ pub struct LayerKvCache {
     value: Tensor,
     len: usize,
     max_seq_len: usize,
-    num_heads: usize,
+    num_kv_heads: usize,
     head_dim: usize,
 }
 impl LayerKvCache {
     pub fn new(
         context: &MetalContext,
-        heads: usize,
+        num_kv_heads: usize,
         max: usize,
         dim: usize,
         dtype: DType,
     ) -> Result<Self> {
-        if heads == 0 || max == 0 || dim == 0 {
+        if num_kv_heads == 0 || max == 0 || dim == 0 {
             return Err(TinyError::InvalidShape(
                 "KV cache dimensions must be positive".into(),
             ));
         }
-        let shape = [1, heads, max, dim];
+        let shape = [1, num_kv_heads, max, dim];
         Ok(Self {
             key: Tensor::empty(context, &shape, dtype)?,
             value: Tensor::empty(context, &shape, dtype)?,
             len: 0,
             max_seq_len: max,
-            num_heads: heads,
+            num_kv_heads,
             head_dim: dim,
         })
     }
@@ -64,12 +64,14 @@ impl LayerKvCache {
         if key.shape().dims() != value.shape().dims()
             || key.rank() != 4
             || key.dim(0)? != 1
-            || key.dim(1)? != self.num_heads
+            || key.dim(1)? != self.num_kv_heads
             || key.dim(3)? != self.head_dim
         {
-            return Err(TinyError::ModelFormat(
-                "KV cache write shape does not match this layer".into(),
-            ));
+            return Err(TinyError::ModelFormat(format!(
+                "KV cache write shape does not match this layer: cache has {} KV heads, input has {} heads",
+                self.num_kv_heads,
+                key.dim(1)?,
+            )));
         }
         let seq = key.dim(2)?;
         if self
@@ -110,13 +112,13 @@ impl KvCache {
         context: &MetalContext,
         layers: usize,
         max: usize,
-        heads: usize,
+        num_kv_heads: usize,
         dim: usize,
         dtype: DType,
     ) -> Result<Self> {
         Ok(Self {
             layers: (0..layers)
-                .map(|_| LayerKvCache::new(context, heads, max, dim, dtype))
+                .map(|_| LayerKvCache::new(context, num_kv_heads, max, dim, dtype))
                 .collect::<Result<Vec<_>>>()?,
             max_seq_len: max,
         })
