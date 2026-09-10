@@ -13,6 +13,7 @@ pub struct ModelConfig {
 
     pub num_layers: usize,
     pub num_heads: usize,
+    pub num_kv_heads: usize,
 
     pub max_seq_len: usize,
 
@@ -52,6 +53,12 @@ impl ModelConfig {
             ));
         }
 
+        if self.num_kv_heads == 0 {
+            return Err(TinyError::InvalidShape(
+                "number of key/value attention heads cannot be zero".to_string(),
+            ));
+        }
+
         if !self.hidden_size.is_multiple_of(self.num_heads) {
             return Err(TinyError::InvalidShape(format!(
                 "hidden size {} must be divisible by num_heads {}",
@@ -87,11 +94,22 @@ impl ModelConfig {
             )));
         }
 
+        if !self.num_heads.is_multiple_of(self.num_kv_heads) {
+            return Err(TinyError::ModelFormat(format!(
+                "num_heads {} must be divisible by num_kv_heads {}",
+                self.num_heads, self.num_kv_heads,
+            )));
+        }
+
         Ok(())
     }
 
     pub fn head_dim(&self) -> usize {
         self.hidden_size / self.num_heads
+    }
+
+    pub fn num_kv_groups(&self) -> usize {
+        self.num_heads / self.num_kv_heads
     }
 
     pub fn load_json(path: impl AsRef<Path>) -> Result<Self> {
@@ -115,5 +133,47 @@ impl ModelConfig {
         fs::write(path, text)?;
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ModelConfig;
+
+    fn gqa_config(num_heads: usize, num_kv_heads: usize) -> ModelConfig {
+        ModelConfig {
+            vocab_size: 100,
+            hidden_size: 576,
+            intermediate_size: 1536,
+            num_layers: 4,
+            num_heads,
+            num_kv_heads,
+            max_seq_len: 1024,
+            rms_norm_eps: 1e-5,
+            rope_theta: 10_000.0,
+        }
+    }
+
+    #[test]
+    fn validates_gqa_config_and_reports_group_sizes() {
+        let config = gqa_config(9, 3);
+
+        config.validate().unwrap();
+        assert_eq!(config.head_dim(), 64);
+        assert_eq!(config.num_kv_groups(), 3);
+    }
+
+    #[test]
+    fn rejects_non_divisible_kv_head_count() {
+        let mut config = gqa_config(10, 3);
+        config.hidden_size = 640;
+
+        let error = config.validate().unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("num_heads 10 must be divisible by num_kv_heads 3")
+        );
     }
 }

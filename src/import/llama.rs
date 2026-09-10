@@ -245,39 +245,12 @@ fn parse_llama_config(text: &str) -> Result<ModelConfig> {
         )));
     }
 
-    // ------------------------------------------------
-    // GQA / MQA
-    //
-    // 현재 우리 SelfAttention은
-    // num_heads == num_key_value_heads 만 지원
-    // ------------------------------------------------
-
-    let num_key_value_heads = source
+    // A missing field denotes multi-head attention: each query head has its
+    // own key/value head.  Preserve GQA/MQA metadata for the runtime to
+    // handle (or reject explicitly) later.
+    let num_kv_heads = source
         .num_key_value_heads
         .unwrap_or(source.num_attention_heads);
-
-    if num_key_value_heads != source.num_attention_heads {
-        return Err(TinyError::ModelFormat(format!(
-            "grouped-query attention is not supported: \
-                     num_key_value_heads={}, \
-                     num_attention_heads={}",
-            num_key_value_heads, source.num_attention_heads,
-        )));
-    }
-
-    // ------------------------------------------------
-    // Head dimension
-    // ------------------------------------------------
-
-    if !source
-        .hidden_size
-        .is_multiple_of(source.num_attention_heads)
-    {
-        return Err(TinyError::ModelFormat(format!(
-            "hidden_size {} is not divisible by num_attention_heads {}",
-            source.hidden_size, source.num_attention_heads,
-        )));
-    }
 
     // ------------------------------------------------
     // Bias
@@ -316,6 +289,8 @@ fn parse_llama_config(text: &str) -> Result<ModelConfig> {
 
         num_heads: source.num_attention_heads,
 
+        num_kv_heads,
+
         max_seq_len: source.max_position_embeddings,
 
         rms_norm_eps: source.rms_norm_eps,
@@ -326,4 +301,52 @@ fn parse_llama_config(text: &str) -> Result<ModelConfig> {
     config.validate()?;
 
     Ok(config)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_llama_config;
+
+    #[test]
+    fn llama_110m_defaults_missing_kv_heads_to_attention_heads() {
+        let config = parse_llama_config(
+            r#"{
+                "model_type": "llama",
+                "vocab_size": 32000,
+                "hidden_size": 768,
+                "intermediate_size": 2048,
+                "num_hidden_layers": 12,
+                "num_attention_heads": 12,
+                "max_position_embeddings": 1024,
+                "rms_norm_eps": 0.00001
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(config.num_heads, 12);
+        assert_eq!(config.num_kv_heads, 12);
+        assert_eq!(config.num_kv_groups(), 1);
+    }
+
+    #[test]
+    fn preserves_gqa_kv_head_count() {
+        let config = parse_llama_config(
+            r#"{
+                "model_type": "llama",
+                "vocab_size": 100,
+                "hidden_size": 576,
+                "intermediate_size": 1536,
+                "num_hidden_layers": 4,
+                "num_attention_heads": 9,
+                "num_key_value_heads": 3,
+                "max_position_embeddings": 1024,
+                "rms_norm_eps": 0.00001
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(config.num_heads, 9);
+        assert_eq!(config.num_kv_heads, 3);
+        assert_eq!(config.num_kv_groups(), 3);
+    }
 }

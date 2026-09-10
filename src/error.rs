@@ -31,6 +31,8 @@ pub enum TinyError {
 
     ModelFormat(String),
 
+    UnsupportedModel(String),
+
     MissingWeight(String),
 
     Metal(String),
@@ -99,6 +101,10 @@ impl fmt::Display for TinyError {
 
             TinyError::ModelFormat(message) => {
                 write!(f, "model format error: {message}")
+            }
+
+            TinyError::UnsupportedModel(message) => {
+                write!(f, "unsupported model: {message}")
             }
 
             TinyError::MissingWeight(name) => {

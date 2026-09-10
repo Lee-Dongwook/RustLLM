@@ -199,6 +199,7 @@ impl Transformer {
         mut weights: ModelWeights,
     ) -> Result<Self> {
         config.validate()?;
+        ensure_attention_layout_supported(&config)?;
 
         let token_embedding = Embedding::new(take_tensor(
             context,
@@ -323,6 +324,17 @@ impl Transformer {
     }
 }
 
+fn ensure_attention_layout_supported(config: &ModelConfig) -> Result<()> {
+    if config.num_heads != config.num_kv_heads {
+        return Err(TinyError::UnsupportedModel(format!(
+            "GQA model detected: {} query heads, {} KV heads; runtime support is not implemented yet",
+            config.num_heads, config.num_kv_heads,
+        )));
+    }
+
+    Ok(())
+}
+
 fn take_tensor(
     context: &MetalContext,
     weights: &mut ModelWeights,
@@ -346,7 +358,7 @@ fn take_tensor(
 
 #[cfg(test)]
 mod tests {
-    use super::{ModelConfig, Transformer};
+    use super::{ModelConfig, Transformer, ensure_attention_layout_supported};
     use crate::{
         error::TinyError,
         metal::MetalContext,
@@ -386,6 +398,7 @@ mod tests {
             intermediate_size: 4,
             num_layers: 1,
             num_heads: 2,
+            num_kv_heads: 2,
             max_seq_len: 8,
             rms_norm_eps: 1e-5,
             rope_theta: 10_000.0,
@@ -466,6 +479,27 @@ mod tests {
                 "Transformer logits mismatch: expected={expected}, actual={actual}, error={error}",
             );
         }
+    }
+
+    #[test]
+    fn rejects_gqa_at_runtime_construction_boundary() {
+        let mut config = ModelConfig {
+            vocab_size: 100,
+            hidden_size: 576,
+            intermediate_size: 1536,
+            num_layers: 4,
+            num_heads: 9,
+            num_kv_heads: 3,
+            max_seq_len: 1024,
+            rms_norm_eps: 1e-5,
+            rope_theta: 10_000.0,
+        };
+
+        let error = ensure_attention_layout_supported(&config).unwrap_err();
+        assert!(matches!(error, TinyError::UnsupportedModel(_)));
+
+        config.num_kv_heads = config.num_heads;
+        ensure_attention_layout_supported(&config).unwrap();
     }
 
     #[test]
