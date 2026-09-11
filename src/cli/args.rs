@@ -57,6 +57,10 @@ pub struct RunArgs {
     #[arg(long)]
     pub benchmark: bool,
 
+    /// Emit benchmark metrics as one JSON object (also enables benchmark mode).
+    #[arg(long)]
+    pub benchmark_json: bool,
+
     /// Accumulate coarse timings for decode-only Transformer operations.
     #[arg(long)]
     pub profile_decode: bool,

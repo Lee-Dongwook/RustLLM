@@ -6,7 +6,7 @@ use std::{
 use tiny_metal_llm::{
     benchmark::BenchmarkStats,
     error::{Result, TinyError},
-    generation::{GenerationConfig, generate_stream, generate_stream_profiled},
+    generation::{generate_stream, generate_stream_profiled, GenerationConfig},
     metal::MetalContext,
     model::Transformer,
     profile::DecodeProfile,
@@ -17,6 +17,7 @@ use tiny_metal_llm::{
 use crate::cli::{DTypeArg, RunArgs};
 
 pub fn execute(args: RunArgs) -> Result<()> {
+    let benchmark = args.benchmark || args.benchmark_json;
     let context = MetalContext::new()?;
     let model_path = args.model.join("model.bin");
     let model_size_bytes = std::fs::metadata(&model_path)?.len();
@@ -81,7 +82,7 @@ pub fn execute(args: RunArgs) -> Result<()> {
     // 실제 사용자가 보는 출력 시작
     // ---------------------------------------------
 
-    if !args.benchmark {
+    if !benchmark {
         print!("{}", args.prompt,);
         io::stdout().flush()?;
     }
@@ -105,7 +106,7 @@ pub fn execute(args: RunArgs) -> Result<()> {
             &generation_config,
             tokenizer.eos_token_id(),
             |token_id| {
-                if args.benchmark {
+                if benchmark {
                     return Ok(());
                 }
                 let delta = decoder.push(token_id)?;
@@ -125,7 +126,7 @@ pub fn execute(args: RunArgs) -> Result<()> {
             &generation_config,
             tokenizer.eos_token_id(),
             |token_id| {
-                if args.benchmark {
+                if benchmark {
                     return Ok(());
                 }
                 let delta = decoder.push(token_id)?;
@@ -138,14 +139,14 @@ pub fn execute(args: RunArgs) -> Result<()> {
         )?
     };
 
-    if !args.benchmark {
+    if !benchmark {
         println!();
     }
 
     eprintln!("generated tokens: {}", output.metrics.generated_tokens,);
 
-    if args.benchmark {
-        BenchmarkStats {
+    if benchmark {
+        let stats = BenchmarkStats {
             model_size_bytes,
             load_time,
             prompt_tokens: output.metrics.prompt_tokens,
@@ -153,8 +154,12 @@ pub fn execute(args: RunArgs) -> Result<()> {
             generated_tokens: output.metrics.generated_tokens,
             decode_time: output.metrics.decode_forward_duration,
             total_generation_time: output.metrics.total_duration,
+        };
+        if args.benchmark_json {
+            stats.print_json();
+        } else {
+            stats.print();
         }
-        .print();
     }
 
     if let Some(profile) = profile.as_ref() {
@@ -162,7 +167,7 @@ pub fn execute(args: RunArgs) -> Result<()> {
         profile.metal.print(profile.sampled_tokens);
     }
 
-    if args.metrics && !args.benchmark {
+    if args.metrics && !benchmark {
         let metrics = &output.metrics;
         eprintln!("\nGeneration metrics");
         eprintln!("  prompt tokens       : {}", metrics.prompt_tokens);

@@ -10,6 +10,8 @@ pub struct MetalDecodeProfile {
     pub kernel_dispatches: usize,
     pub commits: usize,
     pub waits: usize,
+    pub buffer_allocations: usize,
+    pub allocated_bytes: usize,
     pub kernel_dispatches_by_name: BTreeMap<String, usize>,
 }
 
@@ -33,6 +35,10 @@ impl MetalDecodeProfile {
     }
     pub fn record_wait(&mut self) {
         self.waits += 1;
+    }
+    pub fn record_buffer_allocation(&mut self, bytes: usize) {
+        self.buffer_allocations += 1;
+        self.allocated_bytes += bytes;
     }
 
     pub fn print(&self, profiled_tokens: usize) {
@@ -68,6 +74,16 @@ impl MetalDecodeProfile {
             "Waits:                 {} total / {:.2} token",
             self.waits,
             per_token(self.waits)
+        );
+        eprintln!(
+            "Buffer allocations:    {} total / {:.2} token",
+            self.buffer_allocations,
+            per_token(self.buffer_allocations)
+        );
+        eprintln!(
+            "Allocated bytes:       {} total / {:.0} token",
+            self.allocated_bytes,
+            per_token(self.allocated_bytes)
         );
         eprintln!("\nTop dispatched kernels:");
         let mut kernels: Vec<_> = self.kernel_dispatches_by_name.iter().collect();

@@ -42,6 +42,19 @@ impl LayerKvCache {
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
+    /// Allocated sequence capacity. This does not change as tokens are appended.
+    pub fn capacity(&self) -> usize {
+        self.max_seq_len
+    }
+    /// Returns the bytes reserved for both key and value storage.
+    pub fn storage_bytes(&self) -> usize {
+        2 * self.num_kv_heads * self.max_seq_len * self.head_dim * self.dtype().size_in_bytes()
+    }
+    /// Starts a new sequence without clearing GPU memory; future writes overwrite
+    /// the logical prefix before it can be read.
+    pub fn reset(&mut self) {
+        self.len = 0;
+    }
     pub fn dtype(&self) -> DType {
         self.key.dtype()
     }
@@ -134,6 +147,14 @@ impl KvCache {
     pub fn max_seq_len(&self) -> usize {
         self.max_seq_len
     }
+    pub fn storage_bytes(&self) -> usize {
+        self.layers.iter().map(LayerKvCache::storage_bytes).sum()
+    }
+    pub fn reset(&mut self) {
+        for layer in &mut self.layers {
+            layer.reset();
+        }
+    }
 }
 
 #[cfg(test)]
@@ -204,9 +225,7 @@ mod tests {
                 .unwrap()
                 .to_f32_vec()
                 .unwrap(),
-            vec![
-                1., 2., 3., 4., 9., 10., 11., 12., 5., 6., 7., 8., 13., 14., 15., 16.,
-            ],
+            vec![1., 2., 3., 4., 9., 10., 11., 12., 5., 6., 7., 8., 13., 14., 15., 16.,],
         );
     }
 

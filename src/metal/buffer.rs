@@ -1,7 +1,7 @@
 use std::ffi::c_void;
 use std::mem;
 
-use ::metal::{Buffer, MTLResourceOptions};
+use metal::{Buffer, MTLResourceOptions};
 
 use super::MetalContext;
 
@@ -116,6 +116,7 @@ impl MetalBuffer {
         let raw = context
             .device
             .new_buffer(byte_len, MTLResourceOptions::StorageModeShared);
+        context.record_buffer_allocation(byte_len as usize);
 
         Self {
             raw,
@@ -136,6 +137,7 @@ impl MetalBuffer {
         let raw = context
             .device
             .new_buffer(byte_len as u64, MTLResourceOptions::StorageModeShared);
+        context.record_buffer_allocation(byte_len);
         Self { raw, len, byte_len }
     }
 

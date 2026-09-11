@@ -11,10 +11,16 @@ pub struct MetalContext {
     pub device: Device,
     pub command_queue: CommandQueue,
 
-    pipelines: RefCell<HashMap<String, Arc<ComputePipelineState>>>,
+    pipelines: RefCell<HashMap<PipelineKey, Arc<ComputePipelineState>>>,
     // None in ordinary inference: no allocation, locking, or counter updates.
     submission_profile: RefCell<Option<MetalDecodeProfile>>,
     active_command_buffers: Cell<usize>,
+}
+
+#[derive(Clone, Hash, PartialEq, Eq)]
+struct PipelineKey {
+    source_address: usize,
+    function_name: String,
 }
 
 impl MetalContext {
@@ -65,6 +71,12 @@ impl MetalContext {
         }
     }
 
+    pub(crate) fn record_buffer_allocation(&self, bytes: usize) {
+        if let Some(profile) = self.submission_profile.borrow_mut().as_mut() {
+            profile.record_buffer_allocation(bytes);
+        }
+    }
+
     pub(crate) fn begin_execution(&self) {
         self.active_command_buffers
             .set(self.active_command_buffers.get() + 1);
@@ -89,7 +101,11 @@ impl MetalContext {
                 profile.record_wait();
             }
         }
-        if let Some(pipeline) = self.pipelines.borrow().get(function_name).cloned() {
+        let key = PipelineKey {
+            source_address: shader_source.as_ptr() as usize,
+            function_name: function_name.to_owned(),
+        };
+        if let Some(pipeline) = self.pipelines.borrow().get(&key).cloned() {
             return pipeline;
         }
 
@@ -117,7 +133,7 @@ impl MetalContext {
 
         self.pipelines
             .borrow_mut()
-            .insert(function_name.to_string(), Arc::clone(&pipeline));
+            .insert(key, Arc::clone(&pipeline));
         pipeline
     }
 }

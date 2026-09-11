@@ -67,4 +67,20 @@ impl BenchmarkStats {
             self.total_generation_time.as_secs_f64() * 1_000.0
         );
     }
+
+    pub fn print_json(&self) {
+        println!(
+            "{{\"model_size_bytes\":{},\"load_ms\":{:.3},\"prompt_tokens\":{},\"prefill_ms\":{:.3},\"prefill_tps\":{:.3},\"generated_tokens\":{},\"decode_ms\":{:.3},\"decode_tps\":{:.3},\"decode_ms_per_token\":{:.3},\"generation_ms\":{:.3}}}",
+            self.model_size_bytes,
+            self.load_time.as_secs_f64() * 1_000.0,
+            self.prompt_tokens,
+            self.prefill_time.as_secs_f64() * 1_000.0,
+            self.prefill_tokens_per_second(),
+            self.generated_tokens,
+            self.decode_time.as_secs_f64() * 1_000.0,
+            self.decode_tokens_per_second(),
+            if self.generated_tokens == 0 { 0.0 } else { self.decode_time.as_secs_f64() * 1_000.0 / self.generated_tokens as f64 },
+            self.total_generation_time.as_secs_f64() * 1_000.0,
+        );
+    }
 }
