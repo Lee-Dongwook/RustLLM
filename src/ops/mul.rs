@@ -1,13 +1,23 @@
 use std::ffi::c_void;
 use std::mem;
 
-use ::metal::MTLSize;
+use ::metal::{MTLSize, CommandBufferRef};
 
 use crate::error::{Result, TinyError};
 
-use crate::metal::{MetalBuffer, MetalContext};
+use crate::metal::{MetalBuffer, MetalContext, MetalExecution};
 
-pub fn mul_f32(context: &MetalContext, a: &MetalBuffer, b: &MetalBuffer) -> Result<MetalBuffer> {
+pub fn mul_f32(context: &MetalContext, a: &MetalBuffer, b: &MetalBuffer,) -> Result<MetalBuffer> {
+    let execution = MetalExecution::new(context);
+
+    let output = mul_f32_encode(context, execution.command_buffer(), a, b,)?;
+
+    execution.finish();
+
+    Ok(output)
+}
+
+pub(crate) fn mul_f32_encode(context: &MetalContext, command_buffer: &CommandBufferRef, a: &MetalBuffer, b: &MetalBuffer) -> Result<MetalBuffer> {
     if a.len() != b.len() {
         return Err(TinyError::InvalidShape(format!(
             "element-wise multiply requires equal buffer lengths, got {} and {}",
@@ -21,8 +31,6 @@ pub fn mul_f32(context: &MetalContext, a: &MetalBuffer, b: &MetalBuffer) -> Resu
     let shader_source = include_str!("../../kernels/mul.metal");
 
     let pipeline = context.pipeline(shader_source, "mul_f32");
-
-    let command_buffer = context.command_queue.new_command_buffer();
 
     let encoder = command_buffer.new_compute_command_encoder();
 
@@ -51,14 +59,20 @@ pub fn mul_f32(context: &MetalContext, a: &MetalBuffer, b: &MetalBuffer) -> Resu
 
     encoder.end_encoding();
 
-    command_buffer.commit();
-
-    command_buffer.wait_until_completed();
-
     Ok(output)
 }
 
 pub fn mul_f16(context: &MetalContext, a: &MetalBuffer, b: &MetalBuffer) -> Result<MetalBuffer> {
+    let execution = MetalExecution::new(context);
+
+    let output = mul_f16_encode(context, execution.command_buffer(), a, b,)?;
+
+    execution.finish();
+
+    Ok(output)
+}
+
+pub(crate) fn mul_f16_encode(context: &MetalContext, command_buffer: &CommandBufferRef, a: &MetalBuffer, b: &MetalBuffer) -> Result<MetalBuffer> {
     if a.len() != b.len() {
         return Err(TinyError::InvalidShape(format!(
             "element-wise multiply requires equal buffer lengths, got {} and {}",
@@ -72,8 +86,6 @@ pub fn mul_f16(context: &MetalContext, a: &MetalBuffer, b: &MetalBuffer) -> Resu
     let shader_source = include_str!("../../kernels/mul.metal");
 
     let pipeline = context.pipeline(shader_source, "mul_f16");
-
-    let command_buffer = context.command_queue.new_command_buffer();
 
     let encoder = command_buffer.new_compute_command_encoder();
 
@@ -93,9 +105,131 @@ pub fn mul_f16(context: &MetalContext, a: &MetalBuffer, b: &MetalBuffer) -> Resu
 
     encoder.end_encoding();
 
-    command_buffer.commit();
-
-    command_buffer.wait_until_completed();
-
     Ok(output)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::mul_f16_encode;
+
+    use crate::{
+        metal::{
+            MetalContext,
+            MetalExecution,
+        },
+        ops::add_f16_encode,
+        tensor::{
+            DType,
+            Tensor,
+        },
+    };
+
+    #[test]
+    fn batches_add_then_mul_in_one_command_buffer() {
+        let Ok(context) =
+            MetalContext::new()
+        else {
+            return;
+        };
+
+        let a =
+            Tensor::from_f16_slice(
+                &context,
+                &[
+                    half::f16::from_f32(1.0),
+                    half::f16::from_f32(2.0),
+                ],
+                &[2],
+            )
+            .unwrap();
+
+        let b =
+            Tensor::from_f16_slice(
+                &context,
+                &[
+                    half::f16::from_f32(10.0),
+                    half::f16::from_f32(20.0),
+                ],
+                &[2],
+            )
+            .unwrap();
+
+        let c =
+            Tensor::from_f16_slice(
+                &context,
+                &[
+                    half::f16::from_f32(2.0),
+                    half::f16::from_f32(3.0),
+                ],
+                &[2],
+            )
+            .unwrap();
+
+        let execution =
+            MetalExecution::new(
+                &context,
+            );
+
+        /*
+         * 1 + 10 = 11
+         * 2 + 20 = 22
+         */
+        let added =
+            add_f16_encode(
+                &context,
+                execution.command_buffer(),
+                a.metal_buffer().unwrap(),
+                b.metal_buffer().unwrap(),
+            )
+            .unwrap();
+
+        /*
+         * 11 * 2 = 22
+         * 22 * 3 = 66
+         */
+        let multiplied =
+            mul_f16_encode(
+                &context,
+                execution.command_buffer(),
+                &added,
+                c.metal_buffer().unwrap(),
+            )
+            .unwrap();
+
+        /*
+         * 중요한 부분:
+         *
+         * 위 두 kernel 사이에는
+         * commit도 없고
+         * wait도 없다.
+         *
+         * 여기서 처음 한 번만 실행한다.
+         */
+        execution.finish();
+
+        let result =
+            Tensor::from_metal_buffer(
+                multiplied,
+                &[2],
+                DType::F16,
+            )
+            .unwrap();
+
+        let values =
+            result
+                .to_f32_vec()
+                .unwrap();
+
+        assert!(
+            (values[0] - 22.0)
+                .abs()
+                < 0.01
+        );
+
+        assert!(
+            (values[1] - 66.0)
+                .abs()
+                < 0.01
+        );
+    }
 }
