@@ -3,6 +3,7 @@ use crate::error::{Result, TinyError};
 use crate::metal::MetalContext;
 use crate::profile::DecodeProfile;
 use crate::tensor::{DType, Tensor};
+use metal::CommandBufferRef;
 use std::time::Instant;
 
 use super::{Linear, SwiGlu};
@@ -56,6 +57,12 @@ impl Mlp {
         self.gate_proj.dtype()
     }
 
+    pub(crate) fn is_quantized(&self) -> bool {
+        self.gate_proj.is_quantized()
+            && self.up_proj.is_quantized()
+            && self.down_proj.is_quantized()
+    }
+
     pub fn to_dtype(&self, context: &MetalContext, dtype: DType) -> Result<Self> {
         Ok(Self {
             gate_proj: self.gate_proj.to_dtype(context, dtype)?,
@@ -72,6 +79,23 @@ impl Mlp {
         let hidden = SwiGlu::forward(context, &gate, &up)?;
 
         self.down_proj.forward(context, &hidden)
+    }
+
+    pub(crate) fn forward_encode(
+        &self,
+        context: &MetalContext,
+        command_buffer: &CommandBufferRef,
+        input: &Tensor,
+    ) -> Result<Tensor> {
+        let gate = self
+            .gate_proj
+            .forward_encode(context, command_buffer, input)?;
+        let up = self
+            .up_proj
+            .forward_encode(context, command_buffer, input)?;
+        let hidden = SwiGlu::forward_encode(context, command_buffer, &gate, &up)?;
+        self.down_proj
+            .forward_encode(context, command_buffer, &hidden)
     }
 
     pub fn forward_profiled(

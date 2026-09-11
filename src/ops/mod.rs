@@ -15,6 +15,7 @@ mod rmsnorm;
 mod rope;
 mod silu;
 mod softmax;
+mod swiglu;
 
 pub use add::{add_f16, add_f32};
 pub(crate) use add::{add_f16_encode, add_f32_encode};
@@ -38,3 +39,4 @@ pub use rope::{rope, rope_f32};
 pub use silu::{silu_f16, silu_f32};
 pub(crate) use silu::{silu_f16_encode, silu_f32_encode};
 pub use softmax::{softmax_f16, softmax_f32};
+pub(crate) use swiglu::swiglu_f16_encode;

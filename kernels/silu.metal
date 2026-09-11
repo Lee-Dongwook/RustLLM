@@ -34,3 +34,13 @@ kernel void silu_f16(
 
     output[index] = half(result);
 }
+
+kernel void swiglu_f16(
+    device const half* gate [[buffer(0)]],
+    device const half* up [[buffer(1)]],
+    device half* output [[buffer(2)]],
+    uint index [[thread_position_in_grid]]
+) {
+    float x = float(gate[index]);
+    output[index] = half((x / (1.0f + exp(-x))) * float(up[index]));
+}

@@ -1,6 +1,7 @@
 use crate::error::{Result, TinyError};
 
 use crate::metal::MetalContext;
+use metal::CommandBufferRef;
 
 use crate::tensor::{DType, Tensor};
 
@@ -62,6 +63,45 @@ impl RmsNorm {
         }
 
         crate::ops::rmsnorm(context, input, &self.weight, self.epsilon)
+    }
+
+    pub(crate) fn forward_encode(
+        &self,
+        context: &MetalContext,
+        command_buffer: &CommandBufferRef,
+        input: &Tensor,
+    ) -> Result<Tensor> {
+        if input.dtype() != self.weight.dtype()
+            || input.rank() != 2
+            || input.dim(1)? != self.hidden_size
+            || !input.is_contiguous()
+        {
+            return Err(TinyError::ModelFormat(
+                "invalid batched RMSNorm input".into(),
+            ));
+        }
+        let rows = input.dim(0)?;
+        let output = match input.dtype() {
+            DType::F32 => crate::ops::rmsnorm_f32_encode(
+                context,
+                command_buffer,
+                input.metal_buffer()?,
+                self.weight.metal_buffer()?,
+                rows,
+                self.hidden_size,
+                self.epsilon,
+            )?,
+            DType::F16 => crate::ops::rmsnorm_f16_encode(
+                context,
+                command_buffer,
+                input.metal_buffer()?,
+                self.weight.metal_buffer()?,
+                rows,
+                self.hidden_size,
+                self.epsilon,
+            )?,
+        };
+        Tensor::from_metal_buffer(output, input.shape().dims(), input.dtype())
     }
 
     pub fn to_dtype(&self, context: &MetalContext, dtype: DType) -> Result<Self> {

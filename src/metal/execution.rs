@@ -1,4 +1,4 @@
-use ::metal:: {CommandBuffer, CommandBufferRef};
+use metal::{CommandBuffer, CommandBufferRef};
 
 use super::MetalContext;
 
@@ -8,12 +8,11 @@ pub struct MetalExecution<'a> {
 }
 
 impl<'a> MetalExecution<'a> {
-    pub fn new(context: &'a  MetalContext) -> Self {
-        let command_buffer = context
-            .command_queue
-            .new_command_buffer()
-            .to_owned();
+    pub fn new(context: &'a MetalContext) -> Self {
+        let command_buffer = context.command_queue.new_command_buffer().to_owned();
 
+        context.record_command_buffer();
+        context.begin_execution();
         Self {
             context,
             command_buffer,
@@ -29,7 +28,10 @@ impl<'a> MetalExecution<'a> {
     }
 
     pub fn finish(self) {
+        self.context.end_execution();
+        self.context.record_commit();
         self.command_buffer.commit();
+        self.context.record_wait();
         self.command_buffer.wait_until_completed();
     }
 }

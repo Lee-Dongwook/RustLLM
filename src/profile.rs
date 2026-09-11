@@ -14,16 +14,25 @@ pub struct MetalDecodeProfile {
 }
 
 impl MetalDecodeProfile {
-    pub fn record_compute_submission(&mut self, kernel_name: &str) {
-        self.command_buffers += 1;
-        self.compute_encoders += 1;
+    pub fn record_kernel_dispatch(&mut self, kernel_name: &str) {
         self.kernel_dispatches += 1;
-        self.commits += 1;
-        self.waits += 1;
         *self
             .kernel_dispatches_by_name
             .entry(kernel_name.to_owned())
             .or_default() += 1;
+    }
+
+    pub fn record_command_buffer(&mut self) {
+        self.command_buffers += 1;
+    }
+    pub fn record_encoder(&mut self) {
+        self.compute_encoders += 1;
+    }
+    pub fn record_commit(&mut self) {
+        self.commits += 1;
+    }
+    pub fn record_wait(&mut self) {
+        self.waits += 1;
     }
 
     pub fn print(&self, profiled_tokens: usize) {
@@ -202,14 +211,18 @@ mod tests {
     #[test]
     fn metal_submission_counter_accumulates_by_kernel() {
         let mut profile = MetalDecodeProfile::default();
-        profile.record_compute_submission("linear");
-        profile.record_compute_submission("linear");
-        profile.record_compute_submission("softmax");
-        assert_eq!(profile.command_buffers, 3);
-        assert_eq!(profile.compute_encoders, 3);
+        profile.record_command_buffer();
+        profile.record_encoder();
+        profile.record_kernel_dispatch("linear");
+        profile.record_kernel_dispatch("linear");
+        profile.record_kernel_dispatch("softmax");
+        profile.record_commit();
+        profile.record_wait();
+        assert_eq!(profile.command_buffers, 1);
+        assert_eq!(profile.compute_encoders, 1);
         assert_eq!(profile.kernel_dispatches, 3);
-        assert_eq!(profile.commits, 3);
-        assert_eq!(profile.waits, 3);
+        assert_eq!(profile.commits, 1);
+        assert_eq!(profile.waits, 1);
         assert_eq!(profile.kernel_dispatches_by_name["linear"], 2);
     }
 }

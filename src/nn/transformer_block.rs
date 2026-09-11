@@ -1,6 +1,6 @@
 use crate::error::{Result, TinyError};
 
-use crate::metal::MetalContext;
+use crate::metal::{MetalContext, MetalExecution};
 use crate::model::LayerKvCache;
 use crate::profile::DecodeProfile;
 use crate::tensor::{DType, Tensor};
@@ -122,11 +122,24 @@ impl TransformerBlock {
 
         let hidden = x.add(context, &attention)?;
 
-        let normalized = self.mlp_norm.forward(context, &hidden)?;
-
-        let mlp = self.mlp.forward(context, &normalized)?;
-
-        hidden.add(context, &mlp)
+        // INT8 decode keeps the complete SwiGLU tail and its residual in one
+        // command buffer. Dense paths retain their established synchronous API.
+        if x.dim(0)? == 1 && self.mlp.is_quantized() {
+            let execution = MetalExecution::new(context);
+            let normalized =
+                self.mlp_norm
+                    .forward_encode(context, execution.command_buffer(), &hidden)?;
+            let mlp = self
+                .mlp
+                .forward_encode(context, execution.command_buffer(), &normalized)?;
+            let output = hidden.add_encode(context, execution.command_buffer(), &mlp)?;
+            execution.finish();
+            Ok(output)
+        } else {
+            let normalized = self.mlp_norm.forward(context, &hidden)?;
+            let mlp = self.mlp.forward(context, &normalized)?;
+            hidden.add(context, &mlp)
+        }
     }
 
     /// Decode-only profiled variant. The normal inference method above remains
@@ -139,6 +152,16 @@ impl TransformerBlock {
         profile: &mut DecodeProfile,
     ) -> Result<Tensor> {
         self.validate_input_dtype(x)?;
+
+        // Keep profiling on the same decode execution path as production. The
+        // per-stage CPU timings are no longer meaningful once several kernels
+        // share a command buffer, so account for this block as attention time.
+        if x.dim(0)? == 1 && self.mlp.is_quantized() {
+            let started = Instant::now();
+            let output = self.forward_with_cache(context, x, cache)?;
+            profile.attention += started.elapsed();
+            return Ok(output);
+        }
 
         let started = Instant::now();
         let normalized = self.attention_norm.forward(context, x)?;

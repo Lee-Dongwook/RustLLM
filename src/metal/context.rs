@@ -1,8 +1,8 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use ::metal::{CommandQueue, CompileOptions, ComputePipelineState, Device};
+use metal::{CommandQueue, CompileOptions, ComputePipelineState, Device};
 
 use crate::error::{Result, TinyError};
 use crate::profile::MetalDecodeProfile;
@@ -14,6 +14,7 @@ pub struct MetalContext {
     pipelines: RefCell<HashMap<String, Arc<ComputePipelineState>>>,
     // None in ordinary inference: no allocation, locking, or counter updates.
     submission_profile: RefCell<Option<MetalDecodeProfile>>,
+    active_command_buffers: Cell<usize>,
 }
 
 impl MetalContext {
@@ -32,6 +33,7 @@ impl MetalContext {
             command_queue,
             pipelines: RefCell::new(HashMap::new()),
             submission_profile: RefCell::new(None),
+            active_command_buffers: Cell::new(0),
         })
     }
 
@@ -45,13 +47,47 @@ impl MetalContext {
         self.submission_profile.borrow_mut().take()
     }
 
+    pub(crate) fn record_command_buffer(&self) {
+        if let Some(profile) = self.submission_profile.borrow_mut().as_mut() {
+            profile.record_command_buffer();
+        }
+    }
+
+    pub(crate) fn record_commit(&self) {
+        if let Some(profile) = self.submission_profile.borrow_mut().as_mut() {
+            profile.record_commit();
+        }
+    }
+
+    pub(crate) fn record_wait(&self) {
+        if let Some(profile) = self.submission_profile.borrow_mut().as_mut() {
+            profile.record_wait();
+        }
+    }
+
+    pub(crate) fn begin_execution(&self) {
+        self.active_command_buffers
+            .set(self.active_command_buffers.get() + 1);
+    }
+
+    pub(crate) fn end_execution(&self) {
+        self.active_command_buffers
+            .set(self.active_command_buffers.get().saturating_sub(1));
+    }
+
     pub fn pipeline(&self, shader_source: &str, function_name: &str) -> Arc<ComputePipelineState> {
         // Every current call site creates exactly one command buffer and compute
         // encoder, dispatches exactly one kernel, then commits and waits. Keep
         // this branch here rather than in every op so disabled profiling does
         // not allocate or synchronize per kernel.
         if let Some(profile) = self.submission_profile.borrow_mut().as_mut() {
-            profile.record_compute_submission(function_name);
+            profile.record_kernel_dispatch(function_name);
+            profile.record_encoder();
+            if self.active_command_buffers.get() == 0 {
+                profile.record_command_buffer();
+                profile.record_commit();
+                profile.record_wait();
+            }
         }
         if let Some(pipeline) = self.pipelines.borrow().get(function_name).cloned() {
             return pipeline;
