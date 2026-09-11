@@ -61,6 +61,10 @@ impl Linear {
         self.out_features
     }
 
+    pub fn is_quantized(&self) -> bool {
+        matches!(&self.weight, LinearWeight::Int8(_))
+    }
+
     pub fn weight(&self) -> &Tensor {
         match &self.weight {
             LinearWeight::Dense(weight) => weight,

@@ -16,7 +16,29 @@ use std::{
 };
 
 pub(super) fn save(weights: &ModelWeights, path: impl AsRef<Path>) -> Result<()> {
-    save_as(weights, path, DType::F32)
+    let mut out = BufWriter::new(File::create(path)?);
+
+    out.write_all(MAGIC)?;
+
+    u32w(&mut out, VERSION)?;
+
+    u32w(
+        &mut out,
+        u32::try_from(weights.tensors.len())
+            .map_err(|_| TinyError::ModelFormat("too many tensors".into()))?,
+    )?;
+
+    let mut names: Vec<_> = weights.tensors.keys().collect();
+
+    names.sort();
+
+    for name in names {
+        write_tensor(&mut out, name, &weights.tensors[name])?;
+    }
+
+    out.flush()?;
+
+    Ok(())
 }
 
 pub(super) fn save_as(weights: &ModelWeights, path: impl AsRef<Path>, dtype: DType) -> Result<()> {
@@ -193,4 +215,60 @@ fn u64r(r: &mut impl Read) -> Result<u64> {
     let mut b = [0; 8];
     r.read_exact(&mut b)?;
     Ok(u64::from_le_bytes(b))
+}
+
+fn write_tensor(out: &mut impl Write, name: &str, tensor: &super::WeightTensor) -> Result<()> {
+    let name_bytes = name.as_bytes();
+
+    u32w(
+        out,
+        u32::try_from(name_bytes.len())
+            .map_err(|_| TinyError::ModelFormat(format!("weight name too long: {name}")))?,
+    )?;
+
+    out.write_all(name_bytes)?;
+
+    let dtype_tag = match &tensor.data {
+        WeightData::F32(_) => DTYPE_F32,
+
+        WeightData::F16(_) => DTYPE_F16,
+
+        WeightData::I8(_) => DTYPE_I8,
+    };
+
+    out.write_all(&[dtype_tag])?;
+
+    u32w(
+        out,
+        u32::try_from(tensor.shape.len())
+            .map_err(|_| TinyError::ModelFormat(format!("weight rank too large: {name}")))?,
+    )?;
+
+    for &dim in &tensor.shape {
+        u64w(out, dim as u64)?;
+    }
+
+    u64w(out, checked_numel(&tensor.shape)? as u64)?;
+
+    match &tensor.data {
+        WeightData::F32(data) => {
+            for &value in data {
+                out.write_all(&value.to_le_bytes())?;
+            }
+        }
+
+        WeightData::F16(data) => {
+            for &value in data {
+                out.write_all(&value.to_le_bytes())?;
+            }
+        }
+
+        WeightData::I8(data) => {
+            for &value in data {
+                out.write_all(&[value as u8])?;
+            }
+        }
+    }
+
+    Ok(())
 }

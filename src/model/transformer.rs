@@ -1,4 +1,5 @@
 use crate::error::{Result, TinyError};
+use crate::model::linear_scale_name;
 use std::path::Path;
 
 use crate::metal::MetalContext;
@@ -111,6 +112,11 @@ impl Transformer {
         self.token_embedding.dtype()
     }
 
+    /// Returns true when this package uses INT8 weight-only Linear layers.
+    pub fn has_int8_weights(&self) -> bool {
+        self.lm_head.is_quantized()
+    }
+
     /// Converts runtime weights while preserving the on-disk F32 model format.
     pub fn to_dtype(&self, context: &MetalContext, dtype: DType) -> Result<Self> {
         let blocks = self
@@ -219,33 +225,33 @@ impl Transformer {
         for layer_index in 0..config.num_layers {
             let prefix = format!("layers.{layer_index}");
 
-            let q_proj = Linear::new(take_tensor(
+            let q_proj = take_linear(
                 context,
                 &mut weights,
                 &format!("{prefix}.attention.q_proj.weight"),
                 &[config.hidden_size, config.q_proj_size()],
-            )?)?;
+            )?;
 
-            let k_proj = Linear::new(take_tensor(
+            let k_proj = take_linear(
                 context,
                 &mut weights,
                 &format!("{prefix}.attention.k_proj.weight"),
                 &[config.hidden_size, config.kv_proj_size()],
-            )?)?;
+            )?;
 
-            let v_proj = Linear::new(take_tensor(
+            let v_proj = take_linear(
                 context,
                 &mut weights,
                 &format!("{prefix}.attention.v_proj.weight"),
                 &[config.hidden_size, config.kv_proj_size()],
-            )?)?;
+            )?;
 
-            let out_proj = Linear::new(take_tensor(
+            let out_proj = take_linear(
                 context,
                 &mut weights,
                 &format!("{prefix}.attention.out_proj.weight"),
                 &[config.q_proj_size(), config.hidden_size],
-            )?)?;
+            )?;
 
             let attention = SelfAttention::new(
                 q_proj,
@@ -276,26 +282,26 @@ impl Transformer {
                 config.rms_norm_eps,
             )?;
 
-            let gate_proj = Linear::new(take_tensor(
+            let gate_proj = take_linear(
                 context,
                 &mut weights,
                 &format!("{prefix}.mlp.gate_proj.weight"),
                 &[config.hidden_size, config.intermediate_size],
-            )?)?;
+            )?;
 
-            let up_proj = Linear::new(take_tensor(
+            let up_proj = take_linear(
                 context,
                 &mut weights,
                 &format!("{prefix}.mlp.up_proj.weight"),
                 &[config.hidden_size, config.intermediate_size],
-            )?)?;
+            )?;
 
-            let down_proj = Linear::new(take_tensor(
+            let down_proj = take_linear(
                 context,
                 &mut weights,
                 &format!("{prefix}.mlp.down_proj.weight"),
                 &[config.intermediate_size, config.hidden_size],
-            )?)?;
+            )?;
 
             let mlp = Mlp::new(gate_proj, up_proj, down_proj)?;
             let block = TransformerBlock::new(attention_norm, attention, mlp_norm, mlp)?;
@@ -313,12 +319,12 @@ impl Transformer {
             config.rms_norm_eps,
         )?;
 
-        let lm_head = Linear::new(take_tensor(
+        let lm_head = take_linear(
             context,
             &mut weights,
             "lm_head.weight",
             &[config.hidden_size, config.vocab_size],
-        )?)?;
+        )?;
 
         Self::new(config, token_embedding, blocks, final_norm, lm_head)
     }
@@ -351,12 +357,57 @@ fn take_tensor(
     }
 }
 
+fn take_linear(
+    context: &MetalContext,
+    weights: &mut ModelWeights,
+    name: &str,
+    expected_shape: &[usize],
+) -> Result<Linear> {
+    let weight = weights.take(name)?;
+    if weight.shape() != expected_shape {
+        return Err(TinyError::InvalidShape(format!(
+            "weight {name} has shape {:?}, expected {:?}",
+            weight.shape(),
+            expected_shape,
+        )));
+    }
+
+    let (shape, data) = weight.into_storage_parts();
+    match data {
+        WeightData::F32(values) => Linear::new(Tensor::from_f32_slice(context, &values, &shape)?),
+        WeightData::F16(values) => Linear::new(Tensor::from_f16_slice(context, &values, &shape)?),
+        WeightData::I8(values) => {
+            let scale_name = linear_scale_name(name);
+            let scale_weight = weights.take(&scale_name)?;
+            let expected_scale_shape = [shape[1]];
+            if scale_weight.shape() != expected_scale_shape {
+                return Err(TinyError::InvalidShape(format!(
+                    "INT8 scale {scale_name} has shape {:?}, expected {:?}",
+                    scale_weight.shape(),
+                    expected_scale_shape,
+                )));
+            }
+            let (_, scale_data) = scale_weight.into_storage_parts();
+            let scales = match scale_data {
+                WeightData::F32(scales) => scales,
+                _ => {
+                    return Err(TinyError::ModelFormat(format!(
+                        "INT8 scale {scale_name} must use F32 storage"
+                    )));
+                }
+            };
+            Linear::from_i8(context, &shape, &values, &scales)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{ModelConfig, Transformer};
     use crate::{
         error::TinyError,
         metal::MetalContext,
+        model::{ModelWeights, quantize_model_i8},
         nn::{Embedding, Linear, Mlp, RmsNorm, RotaryEmbedding, SelfAttention, TransformerBlock},
         tensor::{DType, Tensor},
     };
@@ -529,5 +580,68 @@ mod tests {
                 .all(|value| value.is_finite())
         );
         assert_eq!(cache.layer_mut(0).unwrap().len(), 4);
+    }
+
+    #[test]
+    fn loads_mixed_int8_weights_and_runs_forward() {
+        let Some(context) = metal_context() else {
+            return;
+        };
+        let config = ModelConfig {
+            vocab_size: 5,
+            hidden_size: 4,
+            intermediate_size: 4,
+            num_layers: 1,
+            num_heads: 2,
+            num_kv_heads: 2,
+            max_seq_len: 8,
+            rms_norm_eps: 1e-5,
+            rope_theta: 10_000.0,
+        };
+        let mut weights = ModelWeights::new();
+        weights
+            .insert_f32("token_embedding.weight", &[5, 4], vec![0.1; 20])
+            .unwrap();
+        weights
+            .insert_f32("layers.0.attention_norm.weight", &[4], vec![1.0; 4])
+            .unwrap();
+        for projection in [
+            "attention.q_proj.weight",
+            "attention.k_proj.weight",
+            "attention.v_proj.weight",
+            "attention.out_proj.weight",
+            "mlp.gate_proj.weight",
+            "mlp.up_proj.weight",
+            "mlp.down_proj.weight",
+        ] {
+            weights
+                .insert_f32(format!("layers.0.{projection}"), &[4, 4], vec![0.1; 16])
+                .unwrap();
+        }
+        weights
+            .insert_f32("layers.0.mlp_norm.weight", &[4], vec![1.0; 4])
+            .unwrap();
+        weights
+            .insert_f32("final_norm.weight", &[4], vec![1.0; 4])
+            .unwrap();
+        weights
+            .insert_f32("lm_head.weight", &[4, 5], vec![0.1; 20])
+            .unwrap();
+
+        let model =
+            Transformer::from_weights(&context, config, quantize_model_i8(weights, 1).unwrap())
+                .unwrap();
+        let logits = model.forward(&context, &[1, 2]).unwrap();
+
+        assert!(model.has_int8_weights());
+        assert_eq!(model.dtype(), DType::F16);
+        assert_eq!(logits.dtype(), DType::F16);
+        assert!(
+            logits
+                .to_f32_vec()
+                .unwrap()
+                .iter()
+                .all(|value| value.is_finite())
+        );
     }
 }

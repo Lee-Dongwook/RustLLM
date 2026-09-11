@@ -105,6 +105,44 @@ impl ModelWeights {
         );
         Ok(())
     }
+
+    pub fn insert_f16(
+        &mut self,
+        name: impl Into<String>,
+        shape: &[usize],
+        data: Vec<half::f16>,
+    ) -> Result<()> {
+        let name = name.into();
+
+        if name.is_empty() || shape.is_empty() || shape.contains(&0) {
+            return Err(TinyError::ModelFormat(format!(
+                "invalid shape or name for F16 weight {name}"
+            )));
+        }
+
+        let numel = checked_numel(shape)?;
+
+        if data.len() != numel {
+            return Err(TinyError::ModelFormat(format!(
+                "weight {name} has {} values, but shape {shape:?} requires {numel}",
+                data.len(),
+            )));
+        }
+
+        if self.tensors.contains_key(&name) {
+            return Err(TinyError::ModelFormat(format!("duplicate weight: {name}")));
+        }
+
+        self.tensors.insert(
+            name,
+            WeightTensor {
+                shape: shape.to_vec(),
+                data: WeightData::F16(data),
+            },
+        );
+        Ok(())
+    }
+
     pub fn insert_i8(
         &mut self,
         name: impl Into<String>,
@@ -199,4 +237,49 @@ mod tests {
             WeightData::I8(_) => panic!("expected F16 weights"),
         }
     }
+}
+
+#[test]
+fn saves_and_loads_mixed_dtype_weights() {
+    let mut weights = ModelWeights::new();
+
+    weights
+        .insert_f16(
+            "embedding.weight",
+            &[2],
+            vec![half::f16::from_f32(1.0), half::f16::from_f32(2.0)],
+        )
+        .unwrap();
+
+    weights
+        .insert_i8("linear.weight", &[2, 2], vec![127, -127, 64, -64])
+        .unwrap();
+
+    weights
+        .insert_f32("linear.scale", &[2], vec![0.01, 0.02])
+        .unwrap();
+
+    let path =
+        std::env::temp_dir().join(format!("tiny-metal-llm-mixed-{}.bin", std::process::id(),));
+
+    weights.save(&path).unwrap();
+
+    let loaded = ModelWeights::load(&path).unwrap();
+
+    std::fs::remove_file(&path).unwrap();
+
+    assert!(matches!(
+        &loaded.get("embedding.weight").unwrap().data,
+        WeightData::F16(_),
+    ));
+
+    assert!(matches!(
+        &loaded.get("linear.weight").unwrap().data,
+        WeightData::I8(_),
+    ));
+
+    assert!(matches!(
+        &loaded.get("linear.scale").unwrap().data,
+        WeightData::F32(_),
+    ));
 }

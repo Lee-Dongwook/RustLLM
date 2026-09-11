@@ -6,6 +6,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 pub enum DTypeArg {
     F32,
     F16,
+    Int8,
 }
 
 #[derive(Debug, Parser)]

@@ -1,3 +1,4 @@
+use crate::model::quantize_i8_per_output_channel;
 use crate::{
     error::{Result, TinyError},
     metal::{MetalBuffer, MetalContext},
@@ -44,7 +45,8 @@ impl QuantizedLinear {
         let in_features = weight.dim(0)?;
         let out_features = weight.dim(1)?;
         let source = weight.to_f32_vec()?;
-        let (quantized, scales) = quantize_per_output_channel(&source, in_features, out_features);
+        let (quantized, scales) =
+            quantize_i8_per_output_channel(&source, in_features, out_features);
 
         Ok(Self {
             weight: MetalBuffer::from_i8_slice(context, &quantized),
@@ -90,39 +92,19 @@ impl QuantizedLinear {
     }
 }
 
-fn quantize_per_output_channel(values: &[f32], rows: usize, columns: usize) -> (Vec<i8>, Vec<f32>) {
-    let mut quantized = vec![0i8; values.len()];
-    let mut scales = vec![1.0f32; columns];
-
-    for column in 0..columns {
-        let max_abs = (0..rows)
-            .map(|row| values[row * columns + column].abs())
-            .fold(0.0f32, f32::max);
-        let scale = if max_abs == 0.0 { 1.0 } else { max_abs / 127.0 };
-        scales[column] = scale;
-
-        for row in 0..rows {
-            quantized[row * columns + column] = (values[row * columns + column] / scale)
-                .round()
-                .clamp(-127.0, 127.0) as i8;
-        }
-    }
-
-    (quantized, scales)
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{QuantizedLinear, quantize_per_output_channel};
+    use super::QuantizedLinear;
     use crate::{
         error::TinyError,
         metal::MetalContext,
+        model::quantize_i8_per_output_channel,
         tensor::{DType, Tensor},
     };
 
     #[test]
     fn quantizes_each_output_channel_symmetrically() {
-        let (values, scales) = quantize_per_output_channel(&[1.0, -2.0, -1.0, 2.0], 2, 2);
+        let (values, scales) = quantize_i8_per_output_channel(&[1.0, -2.0, -1.0, 2.0], 2, 2);
         assert_eq!(values, vec![127, -127, -127, 127]);
         assert_eq!(scales, vec![1.0 / 127.0, 2.0 / 127.0]);
     }

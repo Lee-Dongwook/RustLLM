@@ -3,6 +3,7 @@ use std::{fs, path::Path};
 use tiny_metal_llm::{
     error::Result,
     import::{import_safetensors, load_llama_config, map_llama_weights},
+    model::quantize_model_i8,
     tensor::DType,
 };
 
@@ -33,13 +34,16 @@ pub fn execute(args: ImportArgs) -> Result<()> {
 
     config.save_json(args.output.join("config.json"))?;
 
-    let dtype = match args.dtype {
-        DTypeArg::F32 => DType::F32,
-        DTypeArg::F16 => DType::F16,
-    };
-    weights.save_as(args.output.join("model.bin"), dtype)?;
+    match args.dtype {
+        DTypeArg::F32 => weights.save_as(args.output.join("model.bin"), DType::F32)?,
+        DTypeArg::F16 => weights.save_as(args.output.join("model.bin"), DType::F16)?,
+        DTypeArg::Int8 => {
+            let weights = quantize_model_i8(weights, config.num_layers)?;
+            weights.save(args.output.join("model.bin"))?;
+        }
+    }
 
-    println!("model imported successfully as {dtype:?}");
+    println!("model imported successfully as {:?}", args.dtype);
 
     println!("output: {}", args.output.display(),);
 
