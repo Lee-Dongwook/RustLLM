@@ -106,6 +106,7 @@ where
     let prefill_started = Instant::now();
     let mut logits = model.forward_with_cache(context, prompt_tokens, &mut cache)?;
     let prefill_duration = prefill_started.elapsed();
+    context.begin_decode_submission_profile();
     let generation_started = Instant::now();
     let mut generated_tokens = 0;
     let mut decode_forward_calls = 0;
@@ -125,6 +126,7 @@ where
         profile.record_decode_wall_time(elapsed);
         decode_forward_calls += 1;
     }
+    profile.metal = context.take_decode_submission_profile().unwrap_or_default();
     Ok(GenerationOutput {
         token_ids: tokens,
         metrics: GenerationMetrics {

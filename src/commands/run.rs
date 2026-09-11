@@ -159,6 +159,7 @@ pub fn execute(args: RunArgs) -> Result<()> {
 
     if let Some(profile) = profile.as_ref() {
         profile.print();
+        profile.metal.print(profile.sampled_tokens);
     }
 
     if args.metrics && !args.benchmark {

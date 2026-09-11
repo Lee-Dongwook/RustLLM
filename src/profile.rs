@@ -1,4 +1,77 @@
-use std::time::Duration;
+use std::{collections::BTreeMap, time::Duration};
+
+/// Decode-phase Metal submission counters. Every currently supported tensor
+/// operation creates one command buffer, one compute encoder, and performs one
+/// dispatch followed by commit/wait.
+#[derive(Default, Debug, Clone)]
+pub struct MetalDecodeProfile {
+    pub command_buffers: usize,
+    pub compute_encoders: usize,
+    pub kernel_dispatches: usize,
+    pub commits: usize,
+    pub waits: usize,
+    pub kernel_dispatches_by_name: BTreeMap<String, usize>,
+}
+
+impl MetalDecodeProfile {
+    pub fn record_compute_submission(&mut self, kernel_name: &str) {
+        self.command_buffers += 1;
+        self.compute_encoders += 1;
+        self.kernel_dispatches += 1;
+        self.commits += 1;
+        self.waits += 1;
+        *self
+            .kernel_dispatches_by_name
+            .entry(kernel_name.to_owned())
+            .or_default() += 1;
+    }
+
+    pub fn print(&self, profiled_tokens: usize) {
+        let per_token = |value: usize| -> f64 {
+            if profiled_tokens == 0 {
+                0.0
+            } else {
+                value as f64 / profiled_tokens as f64
+            }
+        };
+        eprintln!("\n=== Metal Decode Profile ===");
+        eprintln!(
+            "Command buffers:       {} total / {:.2} token",
+            self.command_buffers,
+            per_token(self.command_buffers)
+        );
+        eprintln!(
+            "Compute encoders:      {} total / {:.2} token",
+            self.compute_encoders,
+            per_token(self.compute_encoders)
+        );
+        eprintln!(
+            "Kernel dispatches:     {} total / {:.2} token",
+            self.kernel_dispatches,
+            per_token(self.kernel_dispatches)
+        );
+        eprintln!(
+            "Commits:               {} total / {:.2} token",
+            self.commits,
+            per_token(self.commits)
+        );
+        eprintln!(
+            "Waits:                 {} total / {:.2} token",
+            self.waits,
+            per_token(self.waits)
+        );
+        eprintln!("\nTop dispatched kernels:");
+        let mut kernels: Vec<_> = self.kernel_dispatches_by_name.iter().collect();
+        kernels.sort_unstable_by(|(left_name, left_count), (right_name, right_count)| {
+            right_count
+                .cmp(left_count)
+                .then_with(|| left_name.cmp(right_name))
+        });
+        for (name, count) in kernels {
+            eprintln!("{name:<30} {count}");
+        }
+    }
+}
 
 #[derive(Default, Debug, Clone)]
 pub struct DecodeProfile {
@@ -14,6 +87,7 @@ pub struct DecodeProfile {
     pub lm_head: Duration,
     pub decode_wall_time: Duration,
     pub sampled_tokens: usize,
+    pub metal: MetalDecodeProfile,
 }
 
 impl DecodeProfile {
@@ -103,7 +177,7 @@ impl DecodeProfile {
 
 #[cfg(test)]
 mod tests {
-    use super::DecodeProfile;
+    use super::{DecodeProfile, MetalDecodeProfile};
     use std::time::Duration;
 
     #[test]
@@ -123,5 +197,19 @@ mod tests {
         let profile = DecodeProfile::default();
         assert_eq!(profile.average_ms(Duration::from_secs(1)), 0.0);
         assert_eq!(profile.percentage(Duration::from_secs(1)), 0.0);
+    }
+
+    #[test]
+    fn metal_submission_counter_accumulates_by_kernel() {
+        let mut profile = MetalDecodeProfile::default();
+        profile.record_compute_submission("linear");
+        profile.record_compute_submission("linear");
+        profile.record_compute_submission("softmax");
+        assert_eq!(profile.command_buffers, 3);
+        assert_eq!(profile.compute_encoders, 3);
+        assert_eq!(profile.kernel_dispatches, 3);
+        assert_eq!(profile.commits, 3);
+        assert_eq!(profile.waits, 3);
+        assert_eq!(profile.kernel_dispatches_by_name["linear"], 2);
     }
 }

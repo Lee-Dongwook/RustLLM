@@ -5,12 +5,15 @@ use std::sync::Arc;
 use ::metal::{CommandQueue, CompileOptions, ComputePipelineState, Device};
 
 use crate::error::{Result, TinyError};
+use crate::profile::MetalDecodeProfile;
 
 pub struct MetalContext {
     pub device: Device,
     pub command_queue: CommandQueue,
 
     pipelines: RefCell<HashMap<String, Arc<ComputePipelineState>>>,
+    // None in ordinary inference: no allocation, locking, or counter updates.
+    submission_profile: RefCell<Option<MetalDecodeProfile>>,
 }
 
 impl MetalContext {
@@ -28,10 +31,28 @@ impl MetalContext {
             device,
             command_queue,
             pipelines: RefCell::new(HashMap::new()),
+            submission_profile: RefCell::new(None),
         })
     }
 
+    /// Starts decode-only submission profiling. This is deliberately explicit
+    /// so prefill and normal inference never update per-kernel counters.
+    pub fn begin_decode_submission_profile(&self) {
+        *self.submission_profile.borrow_mut() = Some(MetalDecodeProfile::default());
+    }
+
+    pub fn take_decode_submission_profile(&self) -> Option<MetalDecodeProfile> {
+        self.submission_profile.borrow_mut().take()
+    }
+
     pub fn pipeline(&self, shader_source: &str, function_name: &str) -> Arc<ComputePipelineState> {
+        // Every current call site creates exactly one command buffer and compute
+        // encoder, dispatches exactly one kernel, then commits and waits. Keep
+        // this branch here rather than in every op so disabled profiling does
+        // not allocate or synchronize per kernel.
+        if let Some(profile) = self.submission_profile.borrow_mut().as_mut() {
+            profile.record_compute_submission(function_name);
+        }
         if let Some(pipeline) = self.pipelines.borrow().get(function_name).cloned() {
             return pipeline;
         }
