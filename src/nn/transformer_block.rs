@@ -2,7 +2,9 @@ use crate::error::{Result, TinyError};
 
 use crate::metal::MetalContext;
 use crate::model::LayerKvCache;
+use crate::profile::DecodeProfile;
 use crate::tensor::{DType, Tensor};
+use std::time::Instant;
 
 use super::{Mlp, RmsNorm, SelfAttention};
 
@@ -125,6 +127,41 @@ impl TransformerBlock {
         let mlp = self.mlp.forward(context, &normalized)?;
 
         hidden.add(context, &mlp)
+    }
+
+    /// Decode-only profiled variant. The normal inference method above remains
+    /// branch-free when profiling is disabled.
+    pub fn forward_with_cache_profiled(
+        &self,
+        context: &MetalContext,
+        x: &Tensor,
+        cache: &mut LayerKvCache,
+        profile: &mut DecodeProfile,
+    ) -> Result<Tensor> {
+        self.validate_input_dtype(x)?;
+
+        let started = Instant::now();
+        let normalized = self.attention_norm.forward(context, x)?;
+        profile.norm += started.elapsed();
+
+        let attention =
+            self.attention
+                .forward_with_cache_profiled(context, &normalized, cache, profile)?;
+
+        let started = Instant::now();
+        let hidden = x.add(context, &attention)?;
+        profile.residual += started.elapsed();
+
+        let started = Instant::now();
+        let normalized = self.mlp_norm.forward(context, &hidden)?;
+        profile.norm += started.elapsed();
+
+        let mlp = self.mlp.forward_profiled(context, &normalized, profile)?;
+
+        let started = Instant::now();
+        let output = hidden.add(context, &mlp)?;
+        profile.residual += started.elapsed();
+        Ok(output)
     }
 
     fn validate_input_dtype(&self, input: &Tensor) -> Result<()> {

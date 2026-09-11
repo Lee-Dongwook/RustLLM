@@ -56,6 +56,10 @@ pub struct RunArgs {
     /// Suppress streamed output and print load, prefill, and decode timings.
     #[arg(long)]
     pub benchmark: bool,
+
+    /// Accumulate coarse timings for decode-only Transformer operations.
+    #[arg(long)]
+    pub profile_decode: bool,
 }
 
 #[derive(Debug, Args)]

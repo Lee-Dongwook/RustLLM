@@ -22,10 +22,6 @@ pub fn quantized_linear_i8_f16(
         ));
     }
 
-    if m == 1 {
-        return quantized_gemv_i8_f16(context, input, weight, scales, k, n);
-    }
-
     let output = MetalBuffer::empty_with_element_size(context, m * n, 2);
     let pipeline = context.pipeline(
         include_str!("../../kernels/quantized_linear.metal"),
@@ -49,52 +45,6 @@ pub fn quantized_linear_i8_f16(
         );
     }
     encoder.dispatch_threads(MTLSize::new(n as u64, m as u64, 1), MTLSize::new(16, 16, 1));
-    encoder.end_encoding();
-    command.commit();
-    command.wait_until_completed();
-    Ok(output)
-}
-
-fn quantized_gemv_i8_f16(
-    context: &MetalContext,
-    input: &MetalBuffer,
-    weight: &MetalBuffer,
-    scales: &MetalBuffer,
-    k: usize,
-    n: usize,
-) -> Result<MetalBuffer> {
-    let output = MetalBuffer::empty_with_element_size(context, n, 2);
-    let pipeline = context.pipeline(
-        include_str!("../../kernels/quantized_linear.metal"),
-        "quantized_gemv_i8_f16",
-    );
-    let command = context.command_queue.new_command_buffer();
-    let encoder = command.new_compute_command_encoder();
-    encoder.set_compute_pipeline_state(pipeline.as_ref());
-    encoder.set_buffer(0, Some(input.raw()), 0);
-    encoder.set_buffer(1, Some(weight.raw()), 0);
-    encoder.set_buffer(2, Some(scales.raw()), 0);
-    encoder.set_buffer(3, Some(output.raw()), 0);
-    let k_u32 = u32::try_from(k)
-        .map_err(|_| TinyError::InvalidShape("GEMV K dimension exceeds u32".into()))?;
-    let n_u32 = u32::try_from(n)
-        .map_err(|_| TinyError::InvalidShape("GEMV N dimension exceeds u32".into()))?;
-    encoder.set_bytes(
-        4,
-        mem::size_of::<u32>() as u64,
-        &k_u32 as *const u32 as *const c_void,
-    );
-    encoder.set_bytes(
-        5,
-        mem::size_of::<u32>() as u64,
-        &n_u32 as *const u32 as *const c_void,
-    );
-    const THREADS: usize = 256;
-    let threadgroups = n.div_ceil(THREADS);
-    encoder.dispatch_thread_groups(
-        MTLSize::new(threadgroups as u64, 1, 1),
-        MTLSize::new(THREADS as u64, 1, 1),
-    );
     encoder.end_encoding();
     command.commit();
     command.wait_until_completed();

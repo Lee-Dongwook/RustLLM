@@ -409,6 +409,7 @@ mod tests {
         metal::MetalContext,
         model::{ModelWeights, quantize_model_i8},
         nn::{Embedding, Linear, Mlp, RmsNorm, RotaryEmbedding, SelfAttention, TransformerBlock},
+        profile::DecodeProfile,
         tensor::{DType, Tensor},
     };
 
@@ -624,6 +625,36 @@ mod tests {
                 .all(|value| value.is_finite())
         );
         assert_eq!(cache.layer_mut(0).unwrap().len(), 4);
+    }
+
+    #[test]
+    fn profiled_decode_matches_normal_decode() {
+        let Some(context) = metal_context() else {
+            return;
+        };
+        let model = tiny_transformer(&context)
+            .to_dtype(&context, DType::F16)
+            .unwrap();
+        let mut normal_cache = model.new_kv_cache(&context).unwrap();
+        let mut profiled_cache = model.new_kv_cache(&context).unwrap();
+        model
+            .forward_with_cache(&context, &[1, 2], &mut normal_cache)
+            .unwrap();
+        model
+            .forward_with_cache(&context, &[1, 2], &mut profiled_cache)
+            .unwrap();
+
+        let expected = model
+            .forward_with_cache(&context, &[3], &mut normal_cache)
+            .unwrap();
+        let mut profile = DecodeProfile::default();
+        let actual = model
+            .forward_with_cache_profiled(&context, &[3], &mut profiled_cache, &mut profile)
+            .unwrap();
+
+        assert_close(&expected, &actual, 0.001);
+        assert_eq!(profile.sampled_tokens, 0);
+        assert!(!profile.profiled_operations().is_zero());
     }
 
     #[test]

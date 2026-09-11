@@ -6,9 +6,10 @@ use std::{
 use tiny_metal_llm::{
     benchmark::BenchmarkStats,
     error::{Result, TinyError},
-    generation::{GenerationConfig, generate_stream},
+    generation::{GenerationConfig, generate_stream, generate_stream_profiled},
     metal::MetalContext,
     model::Transformer,
+    profile::DecodeProfile,
     tensor::DType,
     tokenizer::{ModelTokenizer, StreamingDecoder, Tokenizer},
 };
@@ -95,28 +96,47 @@ pub fn execute(args: RunArgs) -> Result<()> {
         seed: args.seed,
     };
     generation_config.validate()?;
-    let output = generate_stream(
-        &context,
-        &model,
-        &prompt_tokens,
-        &generation_config,
-        tokenizer.eos_token_id(),
-        |token_id| {
-            if args.benchmark {
-                return Ok(());
-            }
-
-            let delta = decoder.push(token_id)?;
-
-            if !delta.is_empty() {
-                print!("{delta}");
-
-                io::stdout().flush()?;
-            }
-
-            Ok(())
-        },
-    )?;
+    let mut profile = args.profile_decode.then(DecodeProfile::default);
+    let output = if let Some(profile) = profile.as_mut() {
+        generate_stream_profiled(
+            &context,
+            &model,
+            &prompt_tokens,
+            &generation_config,
+            tokenizer.eos_token_id(),
+            |token_id| {
+                if args.benchmark {
+                    return Ok(());
+                }
+                let delta = decoder.push(token_id)?;
+                if !delta.is_empty() {
+                    print!("{delta}");
+                    io::stdout().flush()?;
+                }
+                Ok(())
+            },
+            profile,
+        )?
+    } else {
+        generate_stream(
+            &context,
+            &model,
+            &prompt_tokens,
+            &generation_config,
+            tokenizer.eos_token_id(),
+            |token_id| {
+                if args.benchmark {
+                    return Ok(());
+                }
+                let delta = decoder.push(token_id)?;
+                if !delta.is_empty() {
+                    print!("{delta}");
+                    io::stdout().flush()?;
+                }
+                Ok(())
+            },
+        )?
+    };
 
     if !args.benchmark {
         println!();
@@ -135,6 +155,10 @@ pub fn execute(args: RunArgs) -> Result<()> {
             total_generation_time: output.metrics.total_duration,
         }
         .print();
+    }
+
+    if let Some(profile) = profile.as_ref() {
+        profile.print();
     }
 
     if args.metrics && !args.benchmark {

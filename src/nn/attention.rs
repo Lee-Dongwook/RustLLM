@@ -2,7 +2,9 @@ use crate::error::{Result, TinyError};
 
 use crate::metal::MetalContext;
 use crate::model::LayerKvCache;
+use crate::profile::DecodeProfile;
 use crate::tensor::{DType, Tensor};
+use std::time::Instant;
 
 use super::{Linear, RotaryEmbedding};
 
@@ -261,6 +263,61 @@ impl SelfAttention {
         let attention = attention.reshape(&[seq_len, self.hidden_size])?;
 
         self.out_proj.forward(context, &attention)
+    }
+
+    pub fn forward_with_cache_profiled(
+        &self,
+        context: &MetalContext,
+        x: &Tensor,
+        cache: &mut LayerKvCache,
+        profile: &mut DecodeProfile,
+    ) -> Result<Tensor> {
+        self.validate_input_dtype(x)?;
+        if cache.dtype() != self.dtype() || x.rank() != 2 || x.dim(1)? != self.hidden_size {
+            return self.forward_with_cache(context, x, cache);
+        }
+        let seq_len = x.dim(0)?;
+        let start_pos = cache.len();
+
+        let started = Instant::now();
+        let q = self.q_proj.forward(context, x)?;
+        let k = self.k_proj.forward(context, x)?;
+        let v = self.v_proj.forward(context, x)?;
+        profile.qkv_projection += started.elapsed();
+
+        let started = Instant::now();
+        let q = self.prepare_heads(&q, seq_len, self.num_heads)?;
+        let k = self.prepare_heads(&k, seq_len, self.num_kv_heads)?;
+        let v = self.prepare_heads(&v, seq_len, self.num_kv_heads)?;
+        let q = self.rope.forward(context, &q, start_pos)?;
+        let k = self.rope.forward(context, &k, start_pos)?;
+        cache.append(context, k, v)?;
+        let all_k = cache.key()?;
+        let all_v = cache.value()?;
+        let scores = if self.num_heads != self.num_kv_heads {
+            q.gqa_qk_matmul(context, &all_k)?
+        } else {
+            q.batched_matmul(context, &all_k.transpose(2, 3)?)?
+        };
+        let scores = scores.attention_scale_mask(
+            context,
+            1.0f32 / (self.head_dim as f32).sqrt(),
+            start_pos,
+        )?;
+        let probabilities = scores.softmax_last_dim(context)?;
+        let attention = if self.num_heads != self.num_kv_heads {
+            probabilities.gqa_pv_matmul(context, &all_v)?
+        } else {
+            probabilities.batched_matmul(context, &all_v)?
+        };
+        let attention = attention.permute(&[0, 2, 1, 3])?.contiguous(context)?;
+        let attention = attention.reshape(&[seq_len, self.hidden_size])?;
+        profile.attention += started.elapsed();
+
+        let started = Instant::now();
+        let output = self.out_proj.forward(context, &attention)?;
+        profile.output_projection += started.elapsed();
+        Ok(output)
     }
 
     fn validate_input_dtype(&self, input: &Tensor) -> Result<()> {

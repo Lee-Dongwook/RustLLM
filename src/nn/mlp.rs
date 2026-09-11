@@ -1,7 +1,9 @@
 use crate::error::{Result, TinyError};
 
 use crate::metal::MetalContext;
+use crate::profile::DecodeProfile;
 use crate::tensor::{DType, Tensor};
+use std::time::Instant;
 
 use super::{Linear, SwiGlu};
 
@@ -70,6 +72,27 @@ impl Mlp {
         let hidden = SwiGlu::forward(context, &gate, &up)?;
 
         self.down_proj.forward(context, &hidden)
+    }
+
+    pub fn forward_profiled(
+        &self,
+        context: &MetalContext,
+        input: &Tensor,
+        profile: &mut DecodeProfile,
+    ) -> Result<Tensor> {
+        let started = Instant::now();
+        let gate = self.gate_proj.forward(context, input)?;
+        let up = self.up_proj.forward(context, input)?;
+        profile.mlp_gate_up += started.elapsed();
+
+        let started = Instant::now();
+        let hidden = SwiGlu::forward(context, &gate, &up)?;
+        profile.mlp_activation += started.elapsed();
+
+        let started = Instant::now();
+        let output = self.down_proj.forward(context, &hidden)?;
+        profile.mlp_down += started.elapsed();
+        Ok(output)
     }
 }
 

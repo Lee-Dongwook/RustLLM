@@ -6,5 +6,6 @@ pub mod metal;
 pub mod model;
 pub mod nn;
 pub mod ops;
+pub mod profile;
 pub mod tensor;
 pub mod tokenizer;
