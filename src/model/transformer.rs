@@ -403,7 +403,7 @@ fn take_linear(
 
 #[cfg(test)]
 mod tests {
-    use super::{ModelConfig, Transformer};
+    use super::{ModelConfig, Transformer, take_linear};
     use crate::{
         error::TinyError,
         metal::MetalContext,
@@ -526,6 +526,50 @@ mod tests {
                 "Transformer logits mismatch: expected={expected}, actual={actual}, error={error}",
             );
         }
+    }
+
+    #[test]
+    fn loads_int8_linear_with_scale() {
+        let Some(context) = metal_context() else {
+            return;
+        };
+        let mut weights = ModelWeights::new();
+        weights
+            .insert_i8("test.weight", &[2, 2], vec![127, -127, 64, -64])
+            .unwrap();
+        weights
+            .insert_f32("test.scale", &[2], vec![0.01, 0.02])
+            .unwrap();
+
+        let linear = take_linear(&context, &mut weights, "test.weight", &[2, 2]).unwrap();
+
+        assert_eq!(linear.in_features(), 2);
+        assert_eq!(linear.out_features(), 2);
+        assert_eq!(linear.dtype(), DType::F16);
+        assert!(weights.is_empty());
+    }
+
+    #[test]
+    fn rejects_int8_linear_with_wrong_scale_shape() {
+        let Some(context) = metal_context() else {
+            return;
+        };
+        let mut weights = ModelWeights::new();
+        weights
+            .insert_i8("test.weight", &[2, 3], vec![0; 6])
+            .unwrap();
+        weights
+            .insert_f32("test.scale", &[2], vec![1.0; 2])
+            .unwrap();
+
+        let error = match take_linear(&context, &mut weights, "test.weight", &[2, 3]) {
+            Ok(_) => panic!("INT8 Linear with an invalid scale shape must be rejected"),
+            Err(error) => error,
+        };
+
+        assert!(
+            matches!(error, TinyError::InvalidShape(message) if message.contains("expected [3]") && message.contains("got [2]"))
+        );
     }
 
     #[test]

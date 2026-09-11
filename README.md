@@ -83,16 +83,25 @@ Hugging Face 모델을 `hf download <repo-id> --local-dir models/source/<model-n
 cargo run -- import --source path/to/source-model --output path/to/output-model
 ```
 
-F16 모델은 변환할 때 바로 저장합니다. 이렇게 만든 `model.bin`은 실행 중 F32 전체 모델을 GPU에서 F16으로 캐스팅하지 않고 F16 텐서로 직접 로드합니다.
+`--weight-format`은 파일 안의 가중치 저장 형식을 고릅니다. F16 모델은 실행 중 F32 전체 모델을 GPU에서 F16으로 캐스팅하지 않고 F16 텐서로 직접 로드합니다. INT8은 Linear weight만 INT8과 채널별 F32 scale로 저장하며, embedding/RMSNorm과 runtime activation은 F16을 유지합니다.
 
 ```bash
 cargo run -- import \
   --source path/to/source-model \
   --output path/to/output-model-f16 \
-  --dtype f16
+  --weight-format f16
 ```
 
-입력 디렉터리에는 `config.json`과 `model.safetensors`가 필요합니다. 현재 변환기는 bias 없는 multi-head attention만 지원하며, `num_key_value_heads`가 `num_attention_heads`와 다른 GQA/MQA 모델 또는 bias 텐서가 있는 모델은 명확한 오류로 중단합니다.
+INT8 weight-only 패키지는 다음처럼 변환합니다.
+
+```bash
+cargo run -- import \
+  --source models/source/SmolLM2-135M \
+  --output models/SmolLM2-135M-int8 \
+  --weight-format int8
+```
+
+입력 디렉터리에는 `config.json`과 `model.safetensors`가 필요합니다. 현재 변환기는 bias 없는 Llama 계열 multi-head attention과 GQA/MQA를 지원하며, bias 텐서가 있는 모델은 명확한 오류로 중단합니다.
 
 ## 명령어와 생성 옵션
 
@@ -117,11 +126,43 @@ cargo run -- run \\
   --metrics
 ```
 
-- `--dtype f32|f16`: `model.bin`에 저장된 가중치 dtype과 일치해야 합니다. 기본값은 `f32`이며, F16 모델은 `--dtype f16`으로 실행합니다. 실행 중 전체 모델 dtype 변환은 하지 않습니다.
+- `--dtype f32|f16`: runtime activation dtype입니다. 기본값은 `f32`이며 F16 dense 모델과 INT8 weight-only 모델은 모두 `--dtype f16`으로 실행합니다. INT8은 activation dtype이 아닙니다.
 - `--max-tokens`: 생성할 최대 새 토큰 수입니다. 모델의 남은 context length를 넘지 않습니다.
 - `--temperature`: `0`이면 greedy decoding, 양수이면 확률 샘플링을 사용합니다.
 - `--top-k`, `--top-p`: 샘플링 후보를 각각 상위 K개 및 누적 확률 P로 제한합니다.
 - `--metrics`: prefill, decode, 전체 생성 시간과 속도를 stderr에 출력합니다.
+- `--benchmark`: 스트리밍 출력과 flush를 끄고 model size, load time, prefill/decode 속도, 전체 generation time을 출력합니다. F16과 INT8 비교에 사용합니다.
+
+릴리스 빌드 뒤 같은 prompt와 token 수로 각각 여러 번 실행합니다. 첫 실행은 Metal pipeline 및 파일 cache warmup 용도로 버리고, 이후 3회의 수치를 평균내면 됩니다.
+
+```bash
+cargo build --release
+
+./target/release/tiny-metal-llm run \
+  --model models/SmolLM2-135M \
+  --dtype f16 \
+  --prompt "Once upon a time" \
+  --max-tokens 128 \
+  --benchmark
+
+./target/release/tiny-metal-llm run \
+  --model models/SmolLM2-135M-int8 \
+  --dtype f16 \
+  --prompt "Once upon a time" \
+  --max-tokens 128 \
+  --benchmark
+```
+
+프로세스 최대 RSS는 Rust 코드가 아니라 macOS 도구로 별도로 확인합니다.
+
+```bash
+/usr/bin/time -l ./target/release/tiny-metal-llm run \
+  --model models/SmolLM2-135M-int8 \
+  --dtype f16 \
+  --prompt "Once upon a time" \
+  --max-tokens 128 \
+  --benchmark
+```
 
 ## 예제 모델 구성
 

@@ -1,3 +1,4 @@
+pub mod benchmark;
 pub mod error;
 pub mod generation;
 pub mod import;

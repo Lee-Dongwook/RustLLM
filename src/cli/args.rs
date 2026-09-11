@@ -6,7 +6,6 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 pub enum DTypeArg {
     F32,
     F16,
-    Int8,
 }
 
 #[derive(Debug, Parser)]
@@ -53,6 +52,10 @@ pub struct RunArgs {
     pub seed: u64,
     #[arg(long, default_value_t = false)]
     pub metrics: bool,
+
+    /// Suppress streamed output and print load, prefill, and decode timings.
+    #[arg(long)]
+    pub benchmark: bool,
 }
 
 #[derive(Debug, Args)]
@@ -63,12 +66,19 @@ pub struct ImportArgs {
     #[arg(long, short = 'o')]
     pub output: PathBuf,
 
-    #[arg(long, value_enum, default_value_t = DTypeArg::F32)]
-    pub dtype: DTypeArg,
+    #[arg(long, value_enum, default_value_t = WeightFormat::F16)]
+    pub weight_format: WeightFormat,
 }
 
 #[derive(Debug, Args)]
 pub struct InspectArgs {
     #[arg(long, short = 'm')]
     pub model: PathBuf,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum WeightFormat {
+    F32,
+    F16,
+    Int8,
 }

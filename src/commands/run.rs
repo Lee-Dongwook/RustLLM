@@ -1,6 +1,10 @@
-use std::io::{self, Write};
+use std::{
+    io::{self, Write},
+    time::Instant,
+};
 
 use tiny_metal_llm::{
+    benchmark::BenchmarkStats,
     error::{Result, TinyError},
     generation::{GenerationConfig, generate_stream},
     metal::MetalContext,
@@ -13,23 +17,32 @@ use crate::cli::{DTypeArg, RunArgs};
 
 pub fn execute(args: RunArgs) -> Result<()> {
     let context = MetalContext::new()?;
+    let model_path = args.model.join("model.bin");
+    let model_size_bytes = std::fs::metadata(&model_path)?.len();
 
     eprintln!("loading model...");
 
+    // This includes disk loading plus Metal buffer creation, matching the
+    // time a user waits before generation can begin.
+    let load_started = Instant::now();
     let model = Transformer::load(&context, &args.model)?;
+    let load_time = load_started.elapsed();
     let dtype_matches = match args.dtype {
         DTypeArg::F32 => model.dtype() == DType::F32,
-        DTypeArg::F16 => model.dtype() == DType::F16 && !model.has_int8_weights(),
-        DTypeArg::Int8 => model.has_int8_weights(),
+        // INT8 weight-only packages still execute with F16 activations.
+        DTypeArg::F16 => model.dtype() == DType::F16,
     };
     if !dtype_matches {
         return Err(TinyError::ModelFormat(format!(
-            "model package does not match --dtype {:?}; re-import with the requested dtype",
+            "model activation dtype does not match --dtype {:?}",
             args.dtype,
         )));
     }
 
     eprintln!("model dtype: {:?}", model.dtype());
+    if model.has_int8_weights() {
+        eprintln!("weight format: INT8 (F16 activations)");
+    }
 
     let tokenizer = ModelTokenizer::from_model_dir(&args.model)?;
 
@@ -67,13 +80,12 @@ pub fn execute(args: RunArgs) -> Result<()> {
     // 실제 사용자가 보는 출력 시작
     // ---------------------------------------------
 
-    print!("{}", args.prompt,);
-
-    io::stdout().flush()?;
+    if !args.benchmark {
+        print!("{}", args.prompt,);
+        io::stdout().flush()?;
+    }
 
     let mut decoder = StreamingDecoder::new(&tokenizer);
-
-    let mut generated_count = 0usize;
 
     let generation_config = GenerationConfig {
         max_new_tokens,
@@ -90,7 +102,9 @@ pub fn execute(args: RunArgs) -> Result<()> {
         &generation_config,
         tokenizer.eos_token_id(),
         |token_id| {
-            generated_count += 1;
+            if args.benchmark {
+                return Ok(());
+            }
 
             let delta = decoder.push(token_id)?;
 
@@ -104,11 +118,26 @@ pub fn execute(args: RunArgs) -> Result<()> {
         },
     )?;
 
-    println!();
+    if !args.benchmark {
+        println!();
+    }
 
-    eprintln!("generated tokens: {}", generated_count,);
+    eprintln!("generated tokens: {}", output.metrics.generated_tokens,);
 
-    if args.metrics {
+    if args.benchmark {
+        BenchmarkStats {
+            model_size_bytes,
+            load_time,
+            prompt_tokens: output.metrics.prompt_tokens,
+            prefill_time: output.metrics.prefill_duration,
+            generated_tokens: output.metrics.generated_tokens,
+            decode_time: output.metrics.decode_forward_duration,
+            total_generation_time: output.metrics.total_duration,
+        }
+        .print();
+    }
+
+    if args.metrics && !args.benchmark {
         let metrics = &output.metrics;
         eprintln!("\nGeneration metrics");
         eprintln!("  prompt tokens       : {}", metrics.prompt_tokens);

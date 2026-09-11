@@ -7,7 +7,7 @@ use tiny_metal_llm::{
     tensor::DType,
 };
 
-use crate::cli::{DTypeArg, ImportArgs};
+use crate::cli::{ImportArgs, WeightFormat};
 
 pub fn execute(args: ImportArgs) -> Result<()> {
     let config_path = args.source.join("config.json");
@@ -34,16 +34,21 @@ pub fn execute(args: ImportArgs) -> Result<()> {
 
     config.save_json(args.output.join("config.json"))?;
 
-    match args.dtype {
-        DTypeArg::F32 => weights.save_as(args.output.join("model.bin"), DType::F32)?,
-        DTypeArg::F16 => weights.save_as(args.output.join("model.bin"), DType::F16)?,
-        DTypeArg::Int8 => {
+    let model_path = args.output.join("model.bin");
+
+    match args.weight_format {
+        WeightFormat::F32 => weights.save_as(&model_path, DType::F32)?,
+        WeightFormat::F16 => weights.save_as(&model_path, DType::F16)?,
+        WeightFormat::Int8 => {
+            println!("quantizing linear weights...");
             let weights = quantize_model_i8(weights, config.num_layers)?;
-            weights.save(args.output.join("model.bin"))?;
+            // Mixed F16 / INT8 / F32(scale) storage must be preserved.
+            weights.save(&model_path)?;
         }
     }
 
-    println!("model imported successfully as {:?}", args.dtype);
+    println!("model imported successfully");
+    println!("weight format: {:?}", args.weight_format);
 
     println!("output: {}", args.output.display(),);
 

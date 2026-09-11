@@ -64,6 +64,11 @@ impl ModelWeights {
     pub fn contains(&self, name: &str) -> bool {
         self.tensors.contains_key(name)
     }
+    pub fn contains_i8(&self) -> bool {
+        self.tensors
+            .values()
+            .any(|tensor| matches!(&tensor.data, WeightData::I8(_)))
+    }
     pub fn get(&self, name: &str) -> Result<&WeightTensor> {
         self.tensors
             .get(name)
