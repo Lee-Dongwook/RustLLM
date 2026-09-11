@@ -148,6 +148,37 @@ mod tests {
     }
 
     #[test]
+    fn int8_gemv_handles_partial_tile_and_threadgroup() {
+        let Ok(context) = MetalContext::new() else {
+            return;
+        };
+        let source_weight: Vec<half::f16> = (0..70 * 300)
+            .map(|index| half::f16::from_f32(((index % 31) as f32 - 15.0) / 20.0))
+            .collect();
+        let source_input: Vec<half::f16> = (0..70)
+            .map(|index| half::f16::from_f32(((index % 13) as f32 - 6.0) / 10.0))
+            .collect();
+        let weight = Tensor::from_f16_slice(&context, &source_weight, &[70, 300]).unwrap();
+        let input = Tensor::from_f16_slice(&context, &source_input, &[1, 70]).unwrap();
+        let expected = input
+            .matmul(&context, &weight)
+            .unwrap()
+            .to_f32_vec()
+            .unwrap();
+        let actual = QuantizedLinear::from_f16_weight(&context, &weight)
+            .unwrap()
+            .forward(&context, &input)
+            .unwrap()
+            .to_f32_vec()
+            .unwrap();
+
+        assert_eq!(actual.len(), 300);
+        for (actual, expected) in actual.iter().zip(expected.iter()) {
+            assert!((actual - expected).abs() < 0.15);
+        }
+    }
+
+    #[test]
     fn rejects_non_f16_weight() {
         let Ok(context) = MetalContext::new() else {
             return;
