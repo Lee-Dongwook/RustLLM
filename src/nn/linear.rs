@@ -1,8 +1,8 @@
-use crate::error::{Result, TinyError};
-
 use super::QuantizedLinear;
+use crate::error::{Result, TinyError};
 use crate::metal::MetalContext;
 use crate::tensor::{DType, Tensor};
+use metal::CommandBufferRef;
 
 pub struct Linear {
     weight: LinearWeight,
@@ -99,6 +99,50 @@ impl Linear {
         match &self.weight {
             LinearWeight::Dense(weight) => input.matmul(context, weight),
             LinearWeight::Int8(weight) => weight.forward(context, input),
+        }
+    }
+
+    pub(crate) fn forward_encode(
+        &self,
+        context: &MetalContext,
+        command_buffer: &CommandBufferRef,
+        input: &Tensor,
+    ) -> Result<Tensor> {
+        if input.rank() != 2 {
+            return Err(TinyError::ModelFormat(format!(
+                "Linear expects rank-2 input, got {:?}",
+                input.shape().dims(),
+            )));
+        }
+
+        if input.dim(1)? != self.in_features {
+            return Err(TinyError::ModelFormat(format!(
+                "Linear input feature mismatch: expected {}, got {}",
+                self.in_features,
+                input.dim(1)?,
+            )));
+        }
+
+        if input.dtype() != self.dtype() {
+            return Err(TinyError::UnsupportedDType(format!(
+                "Linear input dtype {:?} does not match weight dtype {:?}",
+                input.dtype(),
+                self.dtype(),
+            )));
+        }
+
+        match &self.weight {
+            LinearWeight::Dense(_) => {
+                /*
+                 * Dense matmul encode path
+                 * 미지원
+                 */
+                Err(TinyError::UnsupportedDType(
+                    "batched Dense Linear is not implemented yet".into(),
+                ))
+            }
+
+            LinearWeight::Int8(weight) => weight.forward_encode(context, command_buffer, input),
         }
     }
 

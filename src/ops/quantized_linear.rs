@@ -1,14 +1,42 @@
 use std::{ffi::c_void, mem};
 
-use ::metal::MTLSize;
+use metal::{CommandBufferRef, MTLSize};
 
 use crate::{
     error::{Result, TinyError},
-    metal::{MetalBuffer, MetalContext},
+    metal::{MetalBuffer, MetalContext, MetalExecution},
 };
 
 pub fn quantized_linear_i8_f16(
     context: &MetalContext,
+    input: &MetalBuffer,
+    weight: &MetalBuffer,
+    scales: &MetalBuffer,
+    m: usize,
+    k: usize,
+    n: usize,
+) -> Result<MetalBuffer> {
+    let execution = MetalExecution::new(context);
+
+    let output = quantized_linear_i8_f16_encode(
+        context,
+        execution.command_buffer(),
+        input,
+        weight,
+        scales,
+        m,
+        k,
+        n,
+    )?;
+
+    execution.finish();
+
+    Ok(output)
+}
+
+pub(crate) fn quantized_linear_i8_f16_encode(
+    context: &MetalContext,
+    command_buffer: &CommandBufferRef,
     input: &MetalBuffer,
     weight: &MetalBuffer,
     scales: &MetalBuffer,
@@ -27,8 +55,7 @@ pub fn quantized_linear_i8_f16(
         include_str!("../../kernels/quantized_linear.metal"),
         "quantized_linear_i8_f16",
     );
-    let command = context.command_queue.new_command_buffer();
-    let encoder = command.new_compute_command_encoder();
+    let encoder = command_buffer.new_compute_command_encoder();
     encoder.set_compute_pipeline_state(pipeline.as_ref());
     encoder.set_buffer(0, Some(input.raw()), 0);
     encoder.set_buffer(1, Some(weight.raw()), 0);
@@ -46,7 +73,5 @@ pub fn quantized_linear_i8_f16(
     }
     encoder.dispatch_threads(MTLSize::new(n as u64, m as u64, 1), MTLSize::new(16, 16, 1));
     encoder.end_encoding();
-    command.commit();
-    command.wait_until_completed();
     Ok(output)
 }
