@@ -20,6 +20,7 @@ pub use add::{add_f16, add_f32};
 pub(crate) use add::{add_f16_encode, add_f32_encode};
 pub(crate) use mul::{mul_f16_encode, mul_f32_encode};
 pub(crate) use silu::{silu_f16_encode, silu_f32_encode};
+pub(crate) use rmsnorm::{rmsnorm_f16_encode, rmsnorm_f32_encode};
 pub use attention_scale_mask::{attention_scale_mask_f16, attention_scale_mask_f32};
 pub use batched_matmul::{batched_matmul_f16, batched_matmul_f32};
 pub use cast::cast;
