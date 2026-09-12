@@ -9,6 +9,7 @@ pub mod model;
 pub mod nn;
 pub mod ops;
 pub mod profile;
+pub mod retrieval;
 pub mod structured;
 pub mod tensor;
 pub mod tokenizer;
