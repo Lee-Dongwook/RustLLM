@@ -88,7 +88,7 @@ pub fn execute_tool_calling(
      * ToolResult -> final answer prompt
      * ------------------------------------
      */
-    let final_prompt = build_tool_result_prompt(user_request, generated_call.call(), &tool_result)?;
+    let final_prompt = build_tool_result_prompt(user_request, &tool_result)?;
 
     let mut final_conversation = conversation.clone();
 
@@ -103,20 +103,26 @@ pub fn execute_tool_calling(
      */
     let mut generated_tokens = Vec::new();
 
+    let final_config = GenerationConfig {
+        max_new_tokens: 32,
+        temperature: 0.0,
+        top_k: None,
+        top_p: 1.0,
+        seed: generation_config.seed,
+    };
+
     let final_generation = generate_chat_stream(
         context,
         model,
         tokenizer,
         template,
         &final_conversation,
-        generation_config,
+        &final_config,
         |token_id| {
             generated_tokens.push(token_id);
-
             Ok(())
         },
     )?;
-
     let answer = tokenizer
         .decode(&generated_tokens, true)?
         .trim()

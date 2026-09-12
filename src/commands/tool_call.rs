@@ -48,8 +48,7 @@ pub fn execute(args: ToolCallArgs) -> Result<()> {
     /*
      * Chat
      */
-    let conversation =
-        Conversation::with_system("Select and call the appropriate tool for the user's request.");
+    let conversation = Conversation::with_system("You are a helpful assistant.");
 
     let template = SmolLm2Template::new();
 
