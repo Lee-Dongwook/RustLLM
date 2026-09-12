@@ -22,6 +22,10 @@ Apple Metal GPU에서 소형 Transformer 언어 모델의 **추론 과정**을 �
 - SmolLM2 ChatML 템플릿 기반의 대화형 `chat` CLI
   - 다중 턴 대화 이력 유지, 토큰 스트리밍 출력, 시스템 프롬프트 지정
   - `/clear`로 대화 초기화, `/exit` 또는 `/quit`으로 종료
+- RAG(Retrieval-Augmented Generation) CLI와 라이브러리
+  - `.txt`/`.md` 문서 로드와 UTF-8 문자 경계를 지키는 overlap 청킹
+  - BM25 기반 lexical 검색과 검색 점수·원본 파일·chunk 위치 제공
+  - 검색 문맥만 근거로 답하도록 지시하는 프롬프트 구성 및 Chat 생성 연결
 - import 시 지원되는 원본 토크나이저 파일을 변환 모델 폴더에 함께 복사
 - 모델 설정을 빠르게 확인하는 `inspect` 명령
 
@@ -119,6 +123,92 @@ cargo run -- chat \
 - `/exit`, `/quit`: Chat CLI를 종료합니다.
 
 각 질문은 누적된 대화 이력 전체를 포함해 다시 생성합니다. 긴 대화를 계속하면 모델의 context length에 도달할 수 있으므로, 그때는 `/clear`로 새 대화를 시작하세요.
+
+## RAG: 문서 기반 질의응답
+
+RAG는 질문과 관련된 문서 조각을 먼저 찾은 뒤, 그 문맥을 함께 모델에 전달해 답변을 생성하는 방식입니다. 이 프로젝트의 RAG는 다음 순서로 동작합니다.
+
+```text
+.txt / .md 문서
+        ↓
+UTF-8 안전 청킹 (기본: 512자, 64자 overlap)
+        ↓
+BM25 lexical 검색 (질문과 겹치는 단어 기준)
+        ↓
+상위 K개 chunk를 출처와 함께 RAG 프롬프트에 주입
+        ↓
+Chat 템플릿 + Transformer 생성
+        ↓
+답변 및 사용된 검색 결과 반환
+```
+
+`rag` CLI 서브커맨드는 문서 하나를 로드해 검색·생성을 실행합니다. 지원하는 입력 문서는 UTF-8 `.txt`, `.md` 파일이며, 빈 문서와 다른 확장자는 오류로 처리합니다.
+
+```bash
+cargo run -- rag \
+  --model models/SmolLM2-135M \
+  --document docs/guide.md \
+  --question "소유권이 무엇인가요?" \
+  --dtype f16 \
+  --retrieve-top-k 3 \
+  --max-tokens 128
+```
+
+최종 답변은 stdout으로 출력되고, 검색된 문서 조각의 파일명·chunk 번호·문자 범위·BM25 점수는 stderr로 출력됩니다. 기본 chunk 크기는 512자, overlap은 64자, 검색 결과 수는 3개입니다.
+
+- `--chunk-size`, `--overlap`: 문서를 나눌 문자 수와 인접 chunk 간 공유할 문자 수입니다. `overlap`은 `chunk-size`보다 작아야 합니다.
+- `--retrieve-top-k`: 모델에 전달할 검색 결과 수입니다. 생성 샘플링의 `--top-k`와 별개이며 0보다 커야 합니다.
+- `--system`, `--max-tokens`, `--temperature`, `--top-k`, `--top-p`, `--seed`: `chat`과 동일하게 답변 역할과 생성 방식을 설정합니다.
+
+같은 구성 요소는 라이브러리 API로도 사용할 수 있습니다. 먼저 문서를 읽고 검색기를 만듭니다.
+
+```rust
+use tiny_metal_llm::{
+    document::{ChunkConfig, chunk_document, load_document},
+    retrieval::{LexicalRetriever, Retriever},
+};
+
+let document = load_document("docs/guide.md")?;
+let chunks = chunk_document(&document, &ChunkConfig::default())?;
+let retriever = LexicalRetriever::new(chunks)?;
+
+let retrieved = retriever.retrieve("소유권이 무엇인가요?", 3)?;
+for result in &retrieved {
+    println!("{}: {:.3}", result.chunk().source().display(), result.score());
+}
+```
+
+이미 Metal context, 모델, 토크나이저를 준비한 애플리케이션에서는 `generate_rag`로 검색과 생성을 한 번에 실행합니다.
+
+```rust
+use tiny_metal_llm::{
+    chat::{Conversation, templates::SmolLm2Template},
+    generation::GenerationConfig,
+    rag::generate_rag,
+};
+
+let conversation = Conversation::with_system("제공된 문서만 근거로 간결하게 답하세요.");
+let generation = GenerationConfig::default();
+
+let result = generate_rag(
+    &context,
+    &model,
+    &tokenizer,
+    &SmolLm2Template::new(),
+    &retriever,
+    &conversation,
+    "소유권이 무엇인가요?",
+    3,
+    &generation,
+)?;
+
+println!("{}", result.answer());
+for source in result.retrieved() {
+    println!("used: {}", source.chunk().source().display());
+}
+```
+
+RAG 프롬프트는 검색된 문맥에 없는 정보는 "제공된 문맥에서 확인할 수 없다"고 답하고, 근거 없는 내용을 만들지 않도록 모델에 지시합니다. 검색 결과가 없거나 `--retrieve-top-k`가 0이면 생성하지 않고 오류를 반환합니다. 응답 길이와 대화 이력까지 포함한 전체 프롬프트 길이는 모델의 context length를 넘지 않게 관리해야 합니다.
 
 ## Hugging Face 모델 변환
 
@@ -244,13 +334,16 @@ cargo build --release
 │   └── special_tokens_map.json
 ├── src/
 │   ├── chat/            # 대화 이력, ChatML 템플릿, chat 추론 연결
-│   ├── cli/             # run/chat/import/inspect 명령행 인자
+│   ├── cli/             # run/chat/rag/import/inspect 명령행 인자
 │   ├── commands/        # 각 CLI 명령 실행 로직
+│   ├── document/        # .txt/.md 로드와 UTF-8 안전 문서 청킹
 │   ├── generation/      # greedy sampler와 생성 루프
 │   ├── metal/           # Metal device, command queue, pipeline cache
 │   ├── model/           # 설정, 가중치 포맷, Transformer 조립
 │   ├── nn/              # Embedding, Attention, MLP, RMSNorm 등 계층
 │   ├── ops/             # 텐서 연산과 Metal kernel 호출
+│   ├── rag/             # 검색 문맥 프롬프트와 RAG 생성 연결
+│   ├── retrieval/       # BM25 lexical 검색기와 검색 결과 타입
 │   ├── tensor/          # Tensor, shape, stride, storage
 │   ├── tokenizer/       # SentencePiece와 문자 토크나이저 구현
 │   ├── error.rs         # 프로젝트 오류 타입
@@ -298,7 +391,7 @@ cargo test
 cargo run -- run --model models/llama2.c-stories110M --prompt "Once upon a time"
 ```
 
-`cargo test`는 텐서/Metal 연산, Transformer, KV Cache, 샘플러, 토크나이저 선택, ChatML 프롬프트 구성, 가중치 파일 저장·로드를 확인합니다. Hugging Face 모델이 필요한 SentencePiece 통합 테스트는 모델을 내려받은 뒤 `cargo test -- --ignored`로 실행합니다. `run`과 `chat`은 Apple Metal GPU가 필요합니다.
+`cargo test`는 텐서/Metal 연산, Transformer, KV Cache, 샘플러, 토크나이저 선택, ChatML 프롬프트 구성, 문서 로드·청킹, BM25 검색, RAG 프롬프트 구성, 가중치 파일 저장·로드를 확인합니다. Hugging Face 모델이 필요한 SentencePiece 통합 테스트는 모델을 내려받은 뒤 `cargo test -- --ignored`로 실행합니다. `run`과 `chat`, `generate_rag`를 통한 실제 생성은 Apple Metal GPU가 필요합니다.
 
 `import` 실행 시에는 `source tensors`, `converted tensors`, `copied <tokenizer-file>`이 출력되는지 확인합니다. 문제가 생기면 아래를 우선 확인하세요.
 
@@ -312,6 +405,8 @@ cargo run -- run --model models/llama2.c-stories110M --prompt "Once upon a time"
 - 학습(training), fine-tuning, 모델 다운로드 기능은 포함하지 않습니다.
 - KV cache는 레이어별 고정 크기 버퍼에 K/V를 기록합니다.
 - 샘플링은 CPU에서 수행하므로, 대규모 vocabulary 모델에서는 병목이 될 수 있습니다.
+- RAG 검색은 임베딩이나 벡터 DB가 아닌 메모리 내 BM25 lexical 검색입니다. 동의어·의미 기반 검색, 다수 문서의 영속 색인, reranking은 다음 단계의 개선 항목입니다.
+- 문서 디렉터리 일괄 색인과 검색 결과 스트리밍 표시는 아직 제공하지 않습니다.
 - 배치 추론과 자동화된 GPU 통합 테스트는 다음 단계의 개선 항목입니다.
 
 ## 기술 스택

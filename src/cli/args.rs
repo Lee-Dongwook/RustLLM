@@ -25,6 +25,8 @@ pub enum Command {
 
     Chat(ChatArgs),
 
+    Rag(RagArgs),
+
     Import(ImportArgs),
 
     Inspect(InspectArgs),
@@ -156,6 +158,52 @@ pub struct StructuredArgs {
     /// Total generation attempts, including the initial attempt.
     #[arg(long, default_value_t = 3)]
     pub attempts: usize,
+}
+
+#[derive(Debug, Args)]
+pub struct RagArgs {
+    #[arg(long, short = 'm')]
+    pub model: PathBuf,
+
+    #[arg(long, short = 'd')]
+    pub document: PathBuf,
+
+    #[arg(long, short = 'q')]
+    pub question: String,
+
+    #[arg(long)]
+    pub system: Option<String>,
+
+    #[arg(long, value_enum, default_value_t = DTypeArg::F16)]
+    pub dtype: DTypeArg,
+
+    /// Number of Unicode characters per document chunk.
+    #[arg(long, default_value_t = 512)]
+    pub chunk_size: usize,
+
+    /// Number of Unicode characters shared between adjacent chunks.
+    #[arg(long, default_value_t = 64)]
+    pub overlap: usize,
+
+    /// Number of retrieved chunks passed to the model.
+    #[arg(long, default_value_t = 3)]
+    pub retrieve_top_k: usize,
+
+    #[arg(long, default_value_t = 128)]
+    pub max_tokens: usize,
+
+    #[arg(long, default_value_t = 0.0)]
+    pub temperature: f32,
+
+    /// Sampling top-k. This is unrelated to retrieval top-k.
+    #[arg(long)]
+    pub top_k: Option<usize>,
+
+    #[arg(long, default_value_t = 1.0)]
+    pub top_p: f32,
+
+    #[arg(long, default_value_t = 42)]
+    pub seed: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]

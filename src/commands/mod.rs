@@ -1,6 +1,7 @@
 mod chat;
 mod import;
 mod inspect;
+mod rag;
 mod run;
 mod structured;
 
@@ -15,6 +16,8 @@ pub fn execute(cli: Cli) -> Result<()> {
         Command::Chat(args) => chat::execute(args),
 
         Command::Structured(args) => structured::execute(args),
+
+        Command::Rag(args) => rag::execute(args),
 
         Command::Import(args) => import::execute(args),
 
