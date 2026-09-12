@@ -92,3 +92,221 @@ fn special_token_ids(
 fn token_content(value: &Value) -> Option<&str> {
     value.as_str().or_else(|| value.get("content")?.as_str())
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        fs,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    use super::HuggingFaceTokenizer;
+    use crate::tokenizer::Tokenizer;
+
+    fn create_test_model_dir() -> std::path::PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+
+        let model_dir = std::env::temp_dir().join(format!(
+            "rustllm-hf-special-token-test-{unique}-{}",
+            std::process::id(),
+        ));
+
+        fs::create_dir_all(&model_dir).unwrap();
+
+        /*
+         * 일반 vocab:
+         *
+         * 0 = <unk>
+         * 1 = system
+         * 2 = user
+         * 3 = assistant
+         * 4 = Hello
+         *
+         * added special tokens:
+         *
+         * 5 = <|im_start|>
+         * 6 = <|im_end|>
+         */
+        fs::write(
+            model_dir.join("tokenizer.json"),
+            r#"{
+                "version": "1.0",
+                "truncation": null,
+                "padding": null,
+                "added_tokens": [
+                    {
+                        "id": 0,
+                        "content": "<unk>",
+                        "single_word": false,
+                        "lstrip": false,
+                        "rstrip": false,
+                        "normalized": false,
+                        "special": true
+                    },
+                    {
+                        "id": 5,
+                        "content": "<|im_start|>",
+                        "single_word": false,
+                        "lstrip": false,
+                        "rstrip": false,
+                        "normalized": false,
+                        "special": true
+                    },
+                    {
+                        "id": 6,
+                        "content": "<|im_end|>",
+                        "single_word": false,
+                        "lstrip": false,
+                        "rstrip": false,
+                        "normalized": false,
+                        "special": true
+                    }
+                ],
+                "normalizer": null,
+                "pre_tokenizer": {
+                    "type": "Whitespace"
+                },
+                "post_processor": null,
+                "decoder": null,
+                "model": {
+                    "type": "WordLevel",
+                    "vocab": {
+                        "<unk>": 0,
+                        "system": 1,
+                        "user": 2,
+                        "assistant": 3,
+                        "Hello": 4
+                    },
+                    "unk_token": "<unk>"
+                }
+            }"#,
+        )
+        .unwrap();
+
+        fs::write(
+            model_dir.join("tokenizer_config.json"),
+            r#"{
+                "bos_token": null,
+                "eos_token": "<|im_end|>"
+            }"#,
+        )
+        .unwrap();
+
+        model_dir
+    }
+
+    #[test]
+    fn encodes_im_start_as_single_special_token() {
+        let model_dir =
+            create_test_model_dir();
+
+        let tokenizer =
+            HuggingFaceTokenizer::from_model_dir(
+                &model_dir,
+            )
+            .unwrap();
+
+        let ids =
+            tokenizer
+                .encode("<|im_start|>")
+                .unwrap();
+
+        assert_eq!(
+            ids,
+            vec![5],
+            "<|im_start|> must encode to exactly one token",
+        );
+
+        fs::remove_dir_all(model_dir).unwrap();
+    }
+
+    #[test]
+    fn encodes_im_end_as_single_special_token() {
+        let model_dir =
+            create_test_model_dir();
+
+        let tokenizer =
+            HuggingFaceTokenizer::from_model_dir(
+                &model_dir,
+            )
+            .unwrap();
+
+        let ids =
+            tokenizer
+                .encode("<|im_end|>")
+                .unwrap();
+
+        assert_eq!(
+            ids,
+            vec![6],
+            "<|im_end|> must encode to exactly one token",
+        );
+
+        fs::remove_dir_all(model_dir).unwrap();
+    }
+
+    #[test]
+    fn resolves_im_end_as_eos_token() {
+        let model_dir =
+            create_test_model_dir();
+
+        let tokenizer =
+            HuggingFaceTokenizer::from_model_dir(
+                &model_dir,
+            )
+            .unwrap();
+
+        assert_eq!(
+            tokenizer.eos_token_id(),
+            Some(6),
+        );
+
+        assert_eq!(
+            tokenizer.bos_token_id(),
+            None,
+        );
+
+        fs::remove_dir_all(model_dir).unwrap();
+    }
+
+    #[test]
+    fn preserves_special_tokens_inside_normal_text() {
+        let model_dir =
+            create_test_model_dir();
+
+        let tokenizer =
+            HuggingFaceTokenizer::from_model_dir(
+                &model_dir,
+            )
+            .unwrap();
+
+        let ids = tokenizer
+            .encode(
+                "<|im_start|>user\nHello<|im_end|>\n<|im_start|>assistant\n",
+            )
+            .unwrap();
+
+        /*
+         * 문자열 한가운데 있어도 special token으로
+         * 분리되어 있어야 한다.
+         */
+        assert_eq!(
+            ids.iter()
+                .filter(|&&id| id == 5)
+                .count(),
+            2,
+        );
+
+        assert_eq!(
+            ids.iter()
+                .filter(|&&id| id == 6)
+                .count(),
+            1,
+        );
+
+        fs::remove_dir_all(model_dir).unwrap();
+    }
+}

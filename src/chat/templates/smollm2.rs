@@ -76,9 +76,15 @@ fn push_message(
 mod tests {
     use super::SmolLm2Template;
 
-    use crate::chat::{
-        ChatTemplate,
-        Conversation,
+    use crate::{
+        chat::{
+            ChatTemplate,
+            Conversation,
+        },
+        tokenizer:: {
+            ModelTokenizer,
+            Tokenizer,
+        },
     };
 
     #[test]
@@ -229,5 +235,183 @@ mod tests {
                 "<|im_end|>\n",
             )
         );
+    }
+    fn create_test_tokenizer_dir() -> std::path::PathBuf {
+    use std::{
+        fs,
+        time::{
+            SystemTime,
+            UNIX_EPOCH,
+        },
+    };
+
+    let unique =
+        SystemTime::now()
+            .duration_since(
+                UNIX_EPOCH,
+            )
+            .unwrap()
+            .as_nanos();
+
+    let model_dir =
+        std::env::temp_dir()
+            .join(format!(
+                "rustllm-chat-template-test-{unique}-{}",
+                std::process::id(),
+            ));
+
+    fs::create_dir_all(
+        &model_dir,
+    )
+    .unwrap();
+
+    fs::write(
+        model_dir.join(
+            "tokenizer.json",
+        ),
+        r#"{
+            "version": "1.0",
+            "truncation": null,
+            "padding": null,
+            "added_tokens": [
+                {
+                    "id": 0,
+                    "content": "<unk>",
+                    "single_word": false,
+                    "lstrip": false,
+                    "rstrip": false,
+                    "normalized": false,
+                    "special": true
+                },
+                {
+                    "id": 5,
+                    "content": "<|im_start|>",
+                    "single_word": false,
+                    "lstrip": false,
+                    "rstrip": false,
+                    "normalized": false,
+                    "special": true
+                },
+                {
+                    "id": 6,
+                    "content": "<|im_end|>",
+                    "single_word": false,
+                    "lstrip": false,
+                    "rstrip": false,
+                    "normalized": false,
+                    "special": true
+                }
+            ],
+            "normalizer": null,
+            "pre_tokenizer": {
+                "type": "Whitespace"
+            },
+            "post_processor": null,
+            "decoder": null,
+            "model": {
+                "type": "WordLevel",
+                "vocab": {
+                    "<unk>": 0,
+                    "system": 1,
+                    "user": 2,
+                    "assistant": 3,
+                    "Hello": 4
+                },
+                "unk_token": "<unk>"
+            }
+        }"#,
+    )
+    .unwrap();
+
+    fs::write(
+        model_dir.join(
+            "tokenizer_config.json",
+        ),
+        r#"{
+            "bos_token": null,
+            "eos_token": "<|im_end|>"
+        }"#,
+    )
+    .unwrap();
+
+    model_dir
+    }
+    #[test]
+fn rendered_chat_preserves_special_token_boundaries() {
+    let model_dir =
+        create_test_tokenizer_dir();
+
+    let tokenizer =
+        ModelTokenizer::from_model_dir(
+            &model_dir,
+        )
+        .unwrap();
+
+    let mut conversation =
+        Conversation::with_system(
+            "Be helpful.",
+        );
+
+    conversation.push_user(
+        "Hello",
+    );
+
+    let prompt =
+        SmolLm2Template::new()
+            .render(
+                &conversation,
+                true,
+            )
+            .unwrap();
+
+    let ids =
+        tokenizer
+            .encode(
+                &prompt,
+            )
+            .unwrap();
+
+    /*
+     * Expected template:
+     *
+     * <|im_start|>system
+     * ...
+     * <|im_end|>
+     *
+     * <|im_start|>user
+     * ...
+     * <|im_end|>
+     *
+     * <|im_start|>assistant
+     *
+     *
+     * 따라서:
+     *
+     * im_start = 3
+     * im_end   = 2
+     */
+    assert_eq!(
+        ids.iter()
+            .filter(|&&id| id == 5)
+            .count(),
+        3,
+    );
+
+    assert_eq!(
+        ids.iter()
+            .filter(|&&id| id == 6)
+            .count(),
+        2,
+    );
+
+    assert_eq!(
+        tokenizer.eos_token_id(),
+        Some(6),
+    );
+
+    std::fs::remove_dir_all(
+        model_dir,
+    )
+    .unwrap();
     }
 }
