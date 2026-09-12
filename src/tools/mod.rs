@@ -1,3 +1,4 @@
+pub mod builtin;
 mod call;
 mod registry;
 mod tool;

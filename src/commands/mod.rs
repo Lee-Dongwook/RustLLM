@@ -4,6 +4,7 @@ mod inspect;
 mod rag;
 mod run;
 mod structured;
+mod tool_call;
 
 use tiny_metal_llm::error::Result;
 
@@ -22,5 +23,6 @@ pub fn execute(cli: Cli) -> Result<()> {
         Command::Import(args) => import::execute(args),
 
         Command::Inspect(args) => inspect::execute(args),
+        Command::ToolCall(args) => tool_call::execute(args),
     }
 }
