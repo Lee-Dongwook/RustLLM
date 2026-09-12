@@ -1,6 +1,6 @@
 use crate::{
     error::{Result, TinyError},
-    tools::{Tool, ToolRegistry},
+    tools::{Tool, ToolCall, ToolRegistry, ToolResult},
 };
 
 pub fn build_tool_selection_prompt(user_request: &str, registry: &ToolRegistry) -> Result<String> {
@@ -70,17 +70,49 @@ pub fn build_tool_arguments_task(user_request: &str, tool: &dyn Tool) -> Result<
     ))
 }
 
+pub fn build_tool_result_prompt(
+    user_request: &str,
+    call: &ToolCall,
+    result: &ToolResult,
+) -> Result<String> {
+    let user_request = user_request.trim();
+
+    if user_request.is_empty() {
+        return Err(TinyError::InvalidArgument(
+            "tool result prompt requires a non-empty user request".to_string(),
+        ));
+    }
+
+    Ok(format!(
+        "Answer the user's request using the tool result below.\n\
+             The tool has already been executed.\n\
+             Do not call another tool.\n\
+             Use the tool result as the source of truth.\n\n\
+             User request:\n{}\n\n\
+             Tool used:\n{}\n\n\
+             Tool arguments:\n{}\n\n\
+             Tool result:\n{}\n\n\
+             Answer:",
+        user_request,
+        call.name(),
+        call.arguments(),
+        result.output(),
+    ))
+}
+
 #[cfg(test)]
 mod tests {
-    use serde_json::Value;
+    use serde_json::{Value, json};
 
-    use super::{build_tool_arguments_task, build_tool_selection_prompt};
+    use super::{build_tool_arguments_task, build_tool_result_prompt, build_tool_selection_prompt};
 
     use crate::{
         error::Result,
         structured::JsonSchema,
         tools::{Tool, ToolRegistry},
     };
+
+    use crate::tools::{ToolCall, ToolResult};
 
     struct CalculatorTool {
         schema: JsonSchema,
@@ -177,5 +209,35 @@ mod tests {
         let result = build_tool_arguments_task("   ", &tool);
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn builds_tool_result_prompt() {
+        let call = ToolCall::new(
+            "calculator",
+            json!({
+                "left": 123,
+                "operator": "multiply",
+                "right": 456
+            }),
+        );
+
+        let result = ToolResult::new(
+            "calculator",
+            json!({
+                "value": 56088
+            }),
+        );
+
+        let prompt =
+            build_tool_result_prompt("What is 123 multiplied by 456?", &call, &result).unwrap();
+
+        assert!(prompt.contains("What is 123 multiplied by 456?"));
+
+        assert!(prompt.contains("calculator"));
+
+        assert!(prompt.contains("56088"));
+
+        assert!(prompt.contains("Do not call another tool."));
     }
 }

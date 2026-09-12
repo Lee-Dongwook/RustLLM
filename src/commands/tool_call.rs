@@ -7,7 +7,7 @@ use tiny_metal_llm::{
     structured::StructuredRetryConfig,
     tensor::DType,
     tokenizer::{ModelTokenizer, Tokenizer},
-    tool_calling::generate_tool_call,
+    tool_calling::execute_tool_calling,
     tools::{ToolRegistry, builtin::CalculatorTool},
 };
 
@@ -74,7 +74,7 @@ pub fn execute(args: ToolCallArgs) -> Result<()> {
 
     eprintln!("generating tool call...");
 
-    let generated = generate_tool_call(
+    let output = execute_tool_calling(
         &context,
         &model,
         &tokenizer,
@@ -86,10 +86,18 @@ pub fn execute(args: ToolCallArgs) -> Result<()> {
         &retry_config,
     )?;
 
+    let generated = output.generated_call();
+
     let call = generated.call();
 
     eprintln!();
+    eprintln!("selected tool: {}", generated.selection_raw(),);
+
+    eprintln!("raw arguments: {}", generated.arguments_raw(),);
+
+    eprintln!();
     eprintln!("tool call:");
+
     eprintln!("  name: {}", call.name(),);
 
     eprintln!(
@@ -99,20 +107,20 @@ pub fn execute(args: ToolCallArgs) -> Result<()> {
         })?,
     );
 
-    /*
-     * 드디어 실제 Tool 실행.
-     */
-    let result = registry.execute(call)?;
-
     eprintln!();
     eprintln!("tool result:");
 
-    println!(
+    eprintln!(
         "{}",
-        serde_json::to_string_pretty(result.output(),).map_err(|error| {
+        serde_json::to_string_pretty(output.tool_result().output(),).map_err(|error| {
             TinyError::Tool(format!("failed to serialize tool result: {error}"))
         })?,
     );
+
+    eprintln!();
+    eprintln!("final answer:");
+
+    println!("{}", output.answer(),);
 
     Ok(())
 }
