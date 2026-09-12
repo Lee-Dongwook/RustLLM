@@ -136,28 +136,18 @@ impl RotaryEmbedding {
         input: &Tensor,
         start_pos: usize,
     ) -> Result<Tensor> {
-        if input.dtype() != DType::F16 {
-        return Err(
-        TinyError::UnsupportedDType(
-            "batched RoPE currently requires F16 input"
-                .into(),
-        ),
-        );
+        if !matches!(input.dtype(), DType::F32 | DType::F16) {
+            return Err(TinyError::UnsupportedDType(format!("{:?}", input.dtype())));
         }
 
-        let input = input.contiguous_encode(context, command_buffer)?;
-        let seq_len = input.dim(input.rank() - 2)?;
-        let output = crate::ops::rope_f16_encode(
+        crate::ops::rope_encode(
             context,
             command_buffer,
-            input.metal_buffer()?,
-            self.cos_table.metal_buffer()?,
-            self.sin_table.metal_buffer()?,
-            seq_len,
-            self.head_dim,
+            input,
+            &self.cos_table,
+            &self.sin_table,
             start_pos,
-        )?;
-        Tensor::from_metal_buffer(output, input.shape().dims(), DType::F16)
+        )
     }
 }
 

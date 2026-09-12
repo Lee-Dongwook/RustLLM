@@ -1,14 +1,32 @@
 use std::ffi::c_void;
 use std::mem;
 
-use ::metal::MTLSize;
+use ::metal::{CommandBufferRef, MTLSize};
 
 use crate::error::{Result, TinyError};
 
-use crate::metal::{MetalBuffer, MetalContext};
+use crate::metal::{MetalBuffer, MetalContext, MetalExecution};
 
 pub fn matmul_f32(
     context: &MetalContext,
+    a: &MetalBuffer,
+    b: &MetalBuffer,
+    m: usize,
+    k: usize,
+    n: usize,
+) -> Result<MetalBuffer> {
+    let execution = MetalExecution::new(context);
+
+    let output = matmul_f32_encode(context, execution.command_buffer(), a, b, m, k, n)?;
+
+    execution.finish();
+
+    Ok(output)
+}
+
+pub(crate) fn matmul_f32_encode(
+    context: &MetalContext,
+    command_buffer: &CommandBufferRef,
     a: &MetalBuffer,
     b: &MetalBuffer,
     m: usize,
@@ -37,8 +55,6 @@ pub fn matmul_f32(
 
     let pipeline = context.pipeline(shader_source, "matmul_f32");
 
-    let command_buffer = context.command_queue.new_command_buffer();
-
     let encoder = command_buffer.new_compute_command_encoder();
 
     encoder.set_compute_pipeline_state(pipeline.as_ref());
@@ -49,50 +65,29 @@ pub fn matmul_f32(
 
     encoder.set_buffer(2, Some(result.raw()), 0);
 
-    let m_u32 =
-        u32::try_from(m).map_err(|_| TinyError::InvalidShape("M exceeds u32".to_string()))?;
+    for (index, value) in [m, k, n].iter().enumerate() {
+        let value = u32::try_from(*value)
+            .map_err(|_| TinyError::InvalidShape("matmul dimension exceeds u32".to_string()))?;
 
-    let k_u32 =
-        u32::try_from(k).map_err(|_| TinyError::InvalidShape("K exceeds u32".to_string()))?;
-
-    let n_u32 =
-        u32::try_from(n).map_err(|_| TinyError::InvalidShape("N exceeds u32".to_string()))?;
-
-    encoder.set_bytes(
-        3,
-        mem::size_of::<u32>() as u64,
-        &m_u32 as *const u32 as *const c_void,
-    );
-
-    encoder.set_bytes(
-        4,
-        mem::size_of::<u32>() as u64,
-        &k_u32 as *const u32 as *const c_void,
-    );
-
-    encoder.set_bytes(
-        5,
-        mem::size_of::<u32>() as u64,
-        &n_u32 as *const u32 as *const c_void,
-    );
+        encoder.set_bytes(
+            (index + 3) as u64,
+            mem::size_of::<u32>() as u64,
+            &value as *const u32 as *const c_void,
+        );
+    }
 
     const TILE_SIZE: u64 = 16;
 
-    let threads_per_group = MTLSize::new(TILE_SIZE, TILE_SIZE, 1);
-
-    let thread_groups = MTLSize::new(
-        (n as u64).div_ceil(TILE_SIZE),
-        (m as u64).div_ceil(TILE_SIZE),
-        1,
+    encoder.dispatch_thread_groups(
+        MTLSize::new(
+            (n as u64).div_ceil(TILE_SIZE),
+            (m as u64).div_ceil(TILE_SIZE),
+            1,
+        ),
+        MTLSize::new(TILE_SIZE, TILE_SIZE, 1),
     );
 
-    encoder.dispatch_thread_groups(thread_groups, threads_per_group);
-
     encoder.end_encoding();
-
-    command_buffer.commit();
-
-    command_buffer.wait_until_completed();
 
     Ok(result)
 }

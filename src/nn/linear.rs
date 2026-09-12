@@ -149,9 +149,23 @@ impl Linear {
                 )?;
                 Tensor::from_metal_buffer(output, &[input.dim(0)?, self.out_features], DType::F16)
             }
-            LinearWeight::Dense(_) => Err(TinyError::UnsupportedDType(
-                "batched F32 Linear is not implemented yet".into(),
-            )),
+            LinearWeight::Dense(weight) => {
+                if !input.is_contiguous() || !weight.is_contiguous() {
+                    return Err(TinyError::NonContiguousTensor(
+                        "batched F32 Linear requires contiguous inputs".into(),
+                    ));
+                }
+                let output = crate::ops::matmul_f32_encode(
+                    context,
+                    command_buffer,
+                    input.metal_buffer()?,
+                    weight.metal_buffer()?,
+                    input.dim(0)?,
+                    self.in_features,
+                    self.out_features,
+                )?;
+                Tensor::from_metal_buffer(output, &[input.dim(0)?, self.out_features], DType::F32)
+            }
 
             LinearWeight::Int8(weight) => weight.forward_encode(context, command_buffer, input),
         }

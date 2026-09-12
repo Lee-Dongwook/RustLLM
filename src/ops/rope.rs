@@ -17,6 +17,34 @@ pub fn rope_f32(
     head_dim: usize,
     start_pos: usize,
 ) -> Result<MetalBuffer> {
+    let execution = MetalExecution::new(context);
+
+    let output = rope_f32_encode(
+        context,
+        execution.command_buffer(),
+        input,
+        cos_table,
+        sin_table,
+        seq_len,
+        head_dim,
+        start_pos,
+    )?;
+
+    execution.finish();
+
+    Ok(output)
+}
+
+pub(crate) fn rope_f32_encode(
+    context: &MetalContext,
+    command_buffer: &CommandBufferRef,
+    input: &MetalBuffer,
+    cos_table: &MetalBuffer,
+    sin_table: &MetalBuffer,
+    seq_len: usize,
+    head_dim: usize,
+    start_pos: usize,
+) -> Result<MetalBuffer> {
     if head_dim == 0 || !head_dim.is_multiple_of(2) {
         return Err(TinyError::InvalidShape(format!(
             "RoPE head dimension must be positive and even, got {head_dim}"
@@ -53,8 +81,6 @@ pub fn rope_f32(
     let shader_source = include_str!("../../kernels/rope.metal");
 
     let pipeline = context.pipeline(shader_source, "rope_f32");
-
-    let command_buffer = context.command_queue.new_command_buffer();
 
     let encoder = command_buffer.new_compute_command_encoder();
 
@@ -120,9 +146,6 @@ pub fn rope_f32(
     encoder.dispatch_threads(grid, threads_per_group);
 
     encoder.end_encoding();
-
-    command_buffer.commit();
-    command_buffer.wait_until_completed();
 
     Ok(output)
 }
@@ -260,6 +283,31 @@ pub fn rope(
     sin: &Tensor,
     start_pos: usize,
 ) -> Result<Tensor> {
+    let execution = MetalExecution::new(context);
+
+    let output = rope_encode(
+        context,
+        execution.command_buffer(),
+        input,
+        cos,
+        sin,
+        start_pos,
+    )?;
+
+    execution.finish();
+
+    Ok(output)
+}
+
+/// Encodes RoPE for either dtype into an existing command buffer.
+pub(crate) fn rope_encode(
+    context: &MetalContext,
+    command_buffer: &CommandBufferRef,
+    input: &Tensor,
+    cos: &Tensor,
+    sin: &Tensor,
+    start_pos: usize,
+) -> Result<Tensor> {
     if cos.dtype() != DType::F32 || sin.dtype() != DType::F32 {
         return Err(TinyError::UnsupportedDType(
             "RoPE requires F32 cos/sin tables".to_string(),
@@ -294,14 +342,11 @@ pub fn rope(
         ));
     }
 
-    let input = if input.is_contiguous() {
-        input.clone()
-    } else {
-        input.contiguous(context)?
-    };
+    let input = input.contiguous_encode(context, command_buffer)?;
     let buffer = match input.dtype() {
-        DType::F32 => rope_f32(
+        DType::F32 => rope_f32_encode(
             context,
+            command_buffer,
             input.metal_buffer()?,
             cos.metal_buffer()?,
             sin.metal_buffer()?,
@@ -309,8 +354,9 @@ pub fn rope(
             head_dim,
             start_pos,
         )?,
-        DType::F16 => rope_f16(
+        DType::F16 => rope_f16_encode(
             context,
+            command_buffer,
             input.metal_buffer()?,
             cos.metal_buffer()?,
             sin.metal_buffer()?,
