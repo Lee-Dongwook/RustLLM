@@ -10,6 +10,25 @@ use crate::{
 };
 
 use super::{JsonSchema, build_json_prompt, parse_json};
+#[derive(Debug)]
+pub struct RawStructuredGeneration {
+    raw_text: String,
+    generation: GenerationOutput,
+}
+
+impl RawStructuredGeneration {
+    pub fn raw_text(&self) -> &str {
+        &self.raw_text
+    }
+
+    pub fn generation(&self) -> &GenerationOutput {
+        &self.generation
+    }
+
+    pub fn into_parts(self) -> (String, GenerationOutput) {
+        (self.raw_text, self.generation)
+    }
+}
 
 #[derive(Debug)]
 pub struct StructuredGeneration<T> {
@@ -19,6 +38,13 @@ pub struct StructuredGeneration<T> {
 }
 
 impl<T> StructuredGeneration<T> {
+    pub(crate) fn new(value: T, raw_text: String, generation: GenerationOutput) -> Self {
+        Self {
+            value,
+            raw_text,
+            generation,
+        }
+    }
     pub fn value(&self) -> &T {
         &self.value
     }
@@ -38,6 +64,48 @@ impl<T> StructuredGeneration<T> {
     pub fn into_parts(self) -> (T, String, GenerationOutput) {
         (self.value, self.raw_text, self.generation)
     }
+}
+
+pub fn generate_structured_raw(
+    context: &MetalContext,
+    model: &Transformer,
+    tokenizer: &dyn Tokenizer,
+    template: &dyn ChatTemplate,
+    conversation: &Conversation,
+    task: &str,
+    schema: &JsonSchema,
+    config: &GenerationConfig,
+) -> Result<RawStructuredGeneration> {
+    let turn = prepare_structured_conversation(conversation, task, schema)?;
+
+    let mut generated_tokens = Vec::new();
+
+    let generation = generate_chat_stream(
+        context,
+        model,
+        tokenizer,
+        template,
+        &turn,
+        config,
+        |token_id| {
+            generated_tokens.push(token_id);
+
+            Ok(())
+        },
+    )?;
+
+    let raw_text = tokenizer.decode(&generated_tokens, true)?;
+
+    if raw_text.trim().is_empty() {
+        return Err(TinyError::StructuredOutput(
+            "model produced an empty structured response".to_string(),
+        ));
+    }
+
+    Ok(RawStructuredGeneration {
+        raw_text,
+        generation,
+    })
 }
 
 pub fn prepare_structured_conversation(
@@ -67,65 +135,24 @@ pub fn generate_structured<T>(
 where
     T: DeserializeOwned,
 {
-    /*
-     * 기존 Conversation을 직접 변경하지 않는다.
-     *
-     * structured task를 새로운 user message로
-     * 붙인 임시 Conversation을 만든다.
-     */
-    let turn = prepare_structured_conversation(conversation, task, schema)?;
-
-    /*
-     * Structured Output은 일단 streaming text가
-     * 필요하지 않으므로 generated token ID만 모은다.
-     */
-    let mut generated_tokens = Vec::new();
-
-    let generation = generate_chat_stream(
+    let raw = generate_structured_raw(
         context,
         model,
         tokenizer,
         template,
-        &turn,
+        conversation,
+        task,
+        schema,
         config,
-        |token_id| {
-            generated_tokens.push(token_id);
-
-            Ok(())
-        },
     )?;
 
-    /*
-     * EOS 등의 special token은 결과 JSON에서
-     * 제거되어야 하므로 true.
-     */
-    let raw_text = tokenizer.decode(&generated_tokens, true)?;
+    let (raw_text, generation) = raw.into_parts();
 
-    if raw_text.trim().is_empty() {
-        return Err(TinyError::StructuredOutput(
-            "model produced an empty structured response".to_string(),
-        ));
-    }
+    let value = parse_json::<T>(&raw_text).map_err(|error| {
+        TinyError::StructuredOutput(format!("{error}; raw model output: {raw_text:?}"))
+    })?;
 
-    let value = match parse_json::<T>(&raw_text) {
-        Ok(value) => value,
-
-        Err(TinyError::StructuredOutput(message)) => {
-            return Err(TinyError::StructuredOutput(format!(
-                "{message}; raw model output: {raw_text:?}"
-            )));
-        }
-
-        Err(error) => {
-            return Err(error);
-        }
-    };
-
-    Ok(StructuredGeneration {
-        value,
-        raw_text,
-        generation,
-    })
+    Ok(StructuredGeneration::new(value, raw_text, generation))
 }
 
 #[cfg(test)]
