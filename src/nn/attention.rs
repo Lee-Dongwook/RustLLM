@@ -301,13 +301,32 @@ impl SelfAttention {
             &all_v,
             start_pos,
         )?;
+        let output = self.merge_heads_and_project_encode(
+            context,
+            execution.command_buffer(),
+            &attention,
+            seq_len,
+        )?;
         execution.finish();
 
-        let attention = attention.permute(&[0, 2, 1, 3])?.contiguous(context)?;
+        Ok(output)
+    }
 
-        let attention = attention.reshape(&[seq_len, self.hidden_size])?;
+    /// Encodes the head merge and the output projection into `command_buffer`.
+    fn merge_heads_and_project_encode(
+        &self,
+        context: &MetalContext,
+        command_buffer: &CommandBufferRef,
+        attention: &Tensor,
+        seq_len: usize,
+    ) -> Result<Tensor> {
+        let attention = attention
+            .permute(&[0, 2, 1, 3])?
+            .contiguous_encode(context, command_buffer)?
+            .reshape(&[seq_len, self.hidden_size])?;
 
-        self.out_proj.forward(context, &attention)
+        self.out_proj
+            .forward_encode(context, command_buffer, &attention)
     }
 
     pub fn forward_with_cache_profiled(
@@ -351,12 +370,17 @@ impl SelfAttention {
             start_pos,
         )?;
         execution.finish();
-        let attention = attention.permute(&[0, 2, 1, 3])?.contiguous(context)?;
-        let attention = attention.reshape(&[seq_len, self.hidden_size])?;
         profile.attention += started.elapsed();
 
         let started = Instant::now();
-        let output = self.out_proj.forward(context, &attention)?;
+        let execution = MetalExecution::new(context);
+        let output = self.merge_heads_and_project_encode(
+            context,
+            execution.command_buffer(),
+            &attention,
+            seq_len,
+        )?;
+        execution.finish();
         profile.output_projection += started.elapsed();
         Ok(output)
     }
