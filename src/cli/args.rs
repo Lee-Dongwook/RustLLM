@@ -29,6 +29,8 @@ pub enum Command {
 
     ToolCall(ToolCallArgs),
 
+    Agent(AgentArgs),
+
     Import(ImportArgs),
 
     Inspect(InspectArgs),
@@ -228,6 +230,51 @@ pub struct ToolCallArgs {
 
     #[arg(long, default_value_t = 2)]
     pub retrieve_top_k: usize,
+
+    #[arg(long, value_enum, default_value_t = DTypeArg::F16)]
+    pub dtype: DTypeArg,
+
+    #[arg(long, default_value_t = 128)]
+    pub max_tokens: usize,
+
+    #[arg(long, default_value_t = 0.0)]
+    pub temperature: f32,
+
+    #[arg(long)]
+    pub top_k: Option<usize>,
+
+    #[arg(long, default_value_t = 1.0)]
+    pub top_p: f32,
+
+    #[arg(long, default_value_t = 42)]
+    pub seed: u64,
+
+    #[arg(long, default_value_t = 3)]
+    pub attempts: usize,
+}
+
+#[derive(Debug, Args)]
+pub struct AgentArgs {
+    #[arg(long, short = 'm')]
+    pub model: PathBuf,
+
+    #[arg(long)]
+    pub request: String,
+
+    #[arg(long, short = 'd')]
+    pub document: Option<PathBuf>,
+
+    #[arg(long, default_value_t = 512)]
+    pub chunk_size: usize,
+
+    #[arg(long, default_value_t = 64)]
+    pub overlap: usize,
+
+    #[arg(long, default_value_t = 2)]
+    pub retrieve_top_k: usize,
+
+    #[arg(long, default_value_t = 5)]
+    pub max_steps: usize,
 
     #[arg(long, value_enum, default_value_t = DTypeArg::F16)]
     pub dtype: DTypeArg,

@@ -52,6 +52,35 @@ impl Tool for DocumentSearchTool {
         &self.schema
     }
 
+    fn validate_arguments(&self, arguments: &Value) -> Result<()> {
+        self.input_schema().validate(arguments)?;
+
+        let query = arguments
+            .get("query")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .ok_or_else(|| {
+                TinyError::Tool("document_search `query` must be a string".to_string())
+            })?;
+
+        if query.is_empty() {
+            return Err(TinyError::Tool(
+                "document_search `query` cannot be empty".to_string(),
+            ));
+        }
+
+        if matches!(
+            query.to_ascii_lowercase().as_str(),
+            "string" | "number" | "boolean" | "object" | "array"
+        ) {
+            return Err(TinyError::Tool(format!(
+                "document_search `query` contains schema placeholder `{query}` instead of an actual search query"
+            )));
+        }
+
+        Ok(())
+    }
+
     fn execute(&self, arguments: &Value) -> Result<Value> {
         let query = arguments
             .get("query")
@@ -172,6 +201,17 @@ mod tests {
 
         let result = tool.execute(&json!({
             "query": "   "
+        }));
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn rejects_placeholder_query() {
+        let tool = test_tool();
+
+        let result = tool.validate_arguments(&json!({
+            "query": "string"
         }));
 
         assert!(result.is_err());

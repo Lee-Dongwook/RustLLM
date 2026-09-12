@@ -113,22 +113,27 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
+    use std::sync::atomic::{AtomicU64, Ordering};
+
     use super::HuggingFaceTokenizer;
-    use super::*;
     use crate::tokenizer::Tokenizer;
+
+    static TEST_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
 
     fn test_model_dir() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("models/SmolLM2-135M-Instruct")
     }
 
     fn create_test_model_dir() -> std::path::PathBuf {
+        let counter = TEST_DIR_COUNTER.fetch_add(1, Ordering::Relaxed);
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
 
         let model_dir = std::env::temp_dir().join(format!(
-            "rustllm-hf-special-token-test-{unique}-{}",
+            "rustllm-hf-special-token-test-{unique}-{:?}-{}-{counter}",
+            std::thread::current().id(),
             std::process::id(),
         ));
 
@@ -230,7 +235,7 @@ mod tests {
             "<|im_start|> must encode to exactly one token",
         );
 
-        fs::remove_dir_all(model_dir).unwrap();
+        let _ = fs::remove_dir_all(&model_dir);
     }
 
     #[test]
@@ -243,7 +248,7 @@ mod tests {
 
         assert_eq!(ids, vec![6], "<|im_end|> must encode to exactly one token",);
 
-        fs::remove_dir_all(model_dir).unwrap();
+        let _ = fs::remove_dir_all(&model_dir);
     }
 
     #[test]
@@ -256,7 +261,7 @@ mod tests {
 
         assert_eq!(tokenizer.bos_token_id(), None,);
 
-        fs::remove_dir_all(model_dir).unwrap();
+        let _ = fs::remove_dir_all(&model_dir);
     }
 
     #[test]

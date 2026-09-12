@@ -59,11 +59,14 @@ pub fn build_tool_arguments_task(user_request: &str, tool: &dyn Tool) -> Result<
     }
 
     Ok(format!(
-        "Create the arguments needed to call the tool `{}`.\n\
-             Use the user's request to determine the actual argument values.\n\
-             Return only the arguments object.\n\n\
-             Tool description:\n{}\n\n\
-             User request:\n{}",
+        "Create the actual arguments needed to call the tool `{}`.\n\
+         The schema describes TYPES only.\n\
+         Never copy schema type words such as \"string\", \"number\", \
+         \"boolean\", \"array\", or \"object\" as argument values.\n\
+         Derive every argument value from the user request.\n\
+         Return only the JSON arguments object.\n\n\
+         Tool description:\n{}\n\n\
+         User request:\n{}",
         tool.name(),
         tool.description(),
         user_request,
@@ -162,7 +165,7 @@ mod tests {
 
         assert!(prompt.contains("What is 123 multiplied by 456?"));
 
-        assert!(prompt.contains("Return only the arguments object."));
+        assert!(prompt.contains("Return only the JSON arguments object."));
     }
 
     #[test]

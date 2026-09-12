@@ -1,3 +1,4 @@
+mod agent;
 mod chat;
 mod import;
 mod inspect;
@@ -23,6 +24,9 @@ pub fn execute(cli: Cli) -> Result<()> {
         Command::Import(args) => import::execute(args),
 
         Command::Inspect(args) => inspect::execute(args),
+
         Command::ToolCall(args) => tool_call::execute(args),
+
+        Command::Agent(args) => agent::execute(args),
     }
 }

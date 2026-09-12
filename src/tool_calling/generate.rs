@@ -14,6 +14,31 @@ use crate::{
 use super::{build_tool_arguments_task, build_tool_selection_prompt};
 
 #[derive(Debug)]
+pub struct GeneratedToolArguments {
+    arguments: Value,
+    raw_text: String,
+    generation: GenerationOutput,
+}
+
+impl GeneratedToolArguments {
+    pub fn arguments(&self) -> &Value {
+        &self.arguments
+    }
+
+    pub fn raw_text(&self) -> &str {
+        &self.raw_text
+    }
+
+    pub fn generation(&self) -> &GenerationOutput {
+        &self.generation
+    }
+
+    pub fn into_parts(self) -> (Value, String, GenerationOutput) {
+        (self.arguments, self.raw_text, self.generation)
+    }
+}
+
+#[derive(Debug)]
 pub struct GeneratedToolCall {
     call: ToolCall,
 
@@ -109,7 +134,7 @@ pub fn generate_tool_call(
         ))
     })?;
 
-    let (arguments, arguments_raw, arguments_generation) = generate_tool_arguments(
+    let generated_arguments = generate_tool_arguments_for_tool(
         context,
         model,
         tokenizer,
@@ -120,6 +145,8 @@ pub fn generate_tool_call(
         generation_config,
         retry_config,
     )?;
+
+    let (arguments, arguments_raw, arguments_generation) = generated_arguments.into_parts();
 
     /*
      * ------------------------------------
@@ -170,6 +197,36 @@ fn parse_tool_name(raw: &str) -> Result<String> {
     }
 
     Ok(raw.to_string())
+}
+
+pub fn generate_tool_arguments_for_tool(
+    context: &MetalContext,
+    model: &Transformer,
+    tokenizer: &dyn Tokenizer,
+    template: &dyn ChatTemplate,
+    conversation: &Conversation,
+    tool: &dyn Tool,
+    user_request: &str,
+    generation_config: &GenerationConfig,
+    retry_config: &StructuredRetryConfig,
+) -> Result<GeneratedToolArguments> {
+    let (arguments, raw_text, generation) = generate_tool_arguments(
+        context,
+        model,
+        tokenizer,
+        template,
+        conversation,
+        tool,
+        user_request,
+        generation_config,
+        retry_config,
+    )?;
+
+    Ok(GeneratedToolArguments {
+        arguments,
+        raw_text,
+        generation,
+    })
 }
 
 fn generate_tool_arguments(

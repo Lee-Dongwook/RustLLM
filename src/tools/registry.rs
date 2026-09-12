@@ -73,14 +73,12 @@ impl ToolRegistry {
             .get(call.name())
             .ok_or_else(|| TinyError::Tool(format!("unknown tool `{}`", call.name(),)))?;
 
-        tool.input_schema()
-            .validate(call.arguments())
-            .map_err(|error| {
-                TinyError::Tool(format!(
-                    "invalid arguments for tool `{}`: {error}",
-                    call.name(),
-                ))
-            })?;
+        tool.validate_arguments(call.arguments()).map_err(|error| {
+            TinyError::Tool(format!(
+                "invalid arguments for tool `{}`: {error}",
+                call.name(),
+            ))
+        })?;
 
         Ok(())
     }
