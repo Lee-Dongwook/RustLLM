@@ -1,11 +1,26 @@
 use crate::{
     error::{Result, TinyError},
-    metal::{MetalBuffer, MetalContext},
+    metal::{MetalBuffer, MetalContext, MetalExecution},
 };
-use ::metal::MTLSize;
+use metal::{CommandBufferRef, MTLSize};
 use std::{ffi::c_void, mem};
 pub fn matmul_f16(
     context: &MetalContext,
+    a: &MetalBuffer,
+    b: &MetalBuffer,
+    m: usize,
+    k: usize,
+    n: usize,
+) -> Result<MetalBuffer> {
+    let execution = MetalExecution::new(context);
+    let output = matmul_f16_encode(context, execution.command_buffer(), a, b, m, k, n)?;
+    execution.finish();
+    Ok(output)
+}
+
+pub(crate) fn matmul_f16_encode(
+    context: &MetalContext,
+    command_buffer: &CommandBufferRef,
     a: &MetalBuffer,
     b: &MetalBuffer,
     m: usize,
@@ -19,8 +34,7 @@ pub fn matmul_f16(
     }
     let output = MetalBuffer::empty_with_element_size(context, m * n, 2);
     let pipeline = context.pipeline(include_str!("../../kernels/matmul_f16.metal"), "matmul_f16");
-    let command = context.command_queue.new_command_buffer();
-    let encoder = command.new_compute_command_encoder();
+    let encoder = command_buffer.new_compute_command_encoder();
     encoder.set_compute_pipeline_state(pipeline.as_ref());
     encoder.set_buffer(0, Some(a.raw()), 0);
     encoder.set_buffer(1, Some(b.raw()), 0);
@@ -36,7 +50,5 @@ pub fn matmul_f16(
     }
     encoder.dispatch_threads(MTLSize::new(n as u64, m as u64, 1), MTLSize::new(16, 16, 1));
     encoder.end_encoding();
-    command.commit();
-    command.wait_until_completed();
     Ok(output)
 }

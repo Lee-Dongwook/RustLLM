@@ -14,6 +14,7 @@ kernel void gqa_qk_f32(
     constant uint& q_len [[buffer(5)]],
     constant uint& kv_len [[buffer(6)]],
     constant uint& head_dim [[buffer(7)]],
+    constant uint& kv_capacity [[buffer(8)]],
 
     uint3 group_id [[threadgroup_position_in_grid]],
     uint3 tid [[thread_position_in_threadgroup]]
@@ -60,7 +61,7 @@ kernel void gqa_qk_f32(
             batch * kv_heads
             + kv_head
         )
-        * kv_len
+        * kv_capacity
         * head_dim;
 
     uint tile_count =
@@ -169,6 +170,7 @@ kernel void gqa_qk_f16(
     constant uint& q_len [[buffer(5)]],
     constant uint& kv_len [[buffer(6)]],
     constant uint& head_dim [[buffer(7)]],
+    constant uint& kv_capacity [[buffer(8)]],
 
     uint3 group_id [[threadgroup_position_in_grid]],
     uint3 tid [[thread_position_in_threadgroup]]
@@ -215,7 +217,7 @@ kernel void gqa_qk_f16(
             batch * kv_heads
             + kv_head
         )
-        * kv_len
+        * kv_capacity
         * head_dim;
 
     uint tile_count =
@@ -328,6 +330,7 @@ kernel void gqa_pv_f32(
     constant uint& q_len [[buffer(5)]],
     constant uint& kv_len [[buffer(6)]],
     constant uint& head_dim [[buffer(7)]],
+    constant uint& kv_capacity [[buffer(8)]],
 
     uint3 group_id [[threadgroup_position_in_grid]],
     uint3 tid [[thread_position_in_threadgroup]]
@@ -371,7 +374,7 @@ kernel void gqa_pv_f32(
             batch * kv_heads
             + kv_head
         )
-        * kv_len
+        * kv_capacity
         * head_dim;
 
     float sum =
@@ -479,6 +482,7 @@ kernel void gqa_pv_f16(
     constant uint& q_len [[buffer(5)]],
     constant uint& kv_len [[buffer(6)]],
     constant uint& head_dim [[buffer(7)]],
+    constant uint& kv_capacity [[buffer(8)]],
 
     uint3 group_id [[threadgroup_position_in_grid]],
     uint3 tid [[thread_position_in_threadgroup]]
@@ -522,7 +526,7 @@ kernel void gqa_pv_f16(
             batch * kv_heads
             + kv_head
         )
-        * kv_len
+        * kv_capacity
         * head_dim;
 
     float sum =

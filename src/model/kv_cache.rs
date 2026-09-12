@@ -4,6 +4,7 @@ use crate::{
     ops::{kv_cache_write_f16, kv_cache_write_f32},
     tensor::{DType, Tensor},
 };
+use metal::CommandBufferRef;
 
 pub struct LayerKvCache {
     key: Tensor,
@@ -14,6 +15,41 @@ pub struct LayerKvCache {
     head_dim: usize,
 }
 impl LayerKvCache {
+    fn validate_append(&self, key: &Tensor, value: &Tensor) -> Result<()> {
+        if key.dtype() != self.key.dtype() || value.dtype() != self.value.dtype() {
+            return Err(TinyError::UnsupportedDType(format!(
+                "KV cache dtype mismatch: cache={:?}/{:?}, input={:?}/{:?}",
+                self.key.dtype(),
+                self.value.dtype(),
+                key.dtype(),
+                value.dtype(),
+            )));
+        }
+        if key.shape().dims() != value.shape().dims()
+            || key.rank() != 4
+            || key.dim(0)? != 1
+            || key.dim(1)? != self.num_kv_heads
+            || key.dim(3)? != self.head_dim
+        {
+            return Err(TinyError::ModelFormat(format!(
+                "KV cache write shape does not match this layer: cache has {} KV heads, input has {} heads",
+                self.num_kv_heads, key.dim(1)?,
+            )));
+        }
+        let seq = key.dim(2)?;
+        if self
+            .len
+            .checked_add(seq)
+            .is_none_or(|end| end > self.max_seq_len)
+        {
+            return Err(TinyError::PositionOutOfRange {
+                start_pos: self.len,
+                seq_len: seq,
+                max_seq_len: self.max_seq_len,
+            });
+        }
+        Ok(())
+    }
     pub fn new(
         context: &MetalContext,
         num_kv_heads: usize,
@@ -65,41 +101,47 @@ impl LayerKvCache {
         self.value.narrow(2, 0, self.len)
     }
     pub fn append(&mut self, context: &MetalContext, key: Tensor, value: Tensor) -> Result<()> {
-        if key.dtype() != self.key.dtype() || value.dtype() != self.value.dtype() {
-            return Err(TinyError::UnsupportedDType(format!(
-                "KV cache dtype mismatch: cache={:?}/{:?}, input={:?}/{:?}",
-                self.key.dtype(),
-                self.value.dtype(),
-                key.dtype(),
-                value.dtype(),
-            )));
-        }
-        if key.shape().dims() != value.shape().dims()
-            || key.rank() != 4
-            || key.dim(0)? != 1
-            || key.dim(1)? != self.num_kv_heads
-            || key.dim(3)? != self.head_dim
-        {
-            return Err(TinyError::ModelFormat(format!(
-                "KV cache write shape does not match this layer: cache has {} KV heads, input has {} heads",
-                self.num_kv_heads,
-                key.dim(1)?,
-            )));
-        }
+        self.validate_append(&key, &value)?;
         let seq = key.dim(2)?;
-        if self
-            .len
-            .checked_add(seq)
-            .is_none_or(|end| end > self.max_seq_len)
-        {
-            return Err(TinyError::PositionOutOfRange {
-                start_pos: self.len,
-                seq_len: seq,
-                max_seq_len: self.max_seq_len,
-            });
-        }
         append_tensor(context, &self.key, &key, self.len)?;
         append_tensor(context, &self.value, &value, self.len)?;
+        self.len += seq;
+        Ok(())
+    }
+
+    pub(crate) fn append_encode(
+        &mut self,
+        context: &MetalContext,
+        command_buffer: &CommandBufferRef,
+        key: Tensor,
+        value: Tensor,
+    ) -> Result<()> {
+        self.validate_append(&key, &value)?;
+        let seq = key.dim(2)?;
+        crate::ops::kv_cache_write_encode(
+            context,
+            command_buffer,
+            &self.key,
+            &key,
+            self.len,
+            self.dtype(),
+            match self.dtype() {
+                DType::F32 => "kv_cache_write_f32",
+                DType::F16 => "kv_cache_write_f16",
+            },
+        )?;
+        crate::ops::kv_cache_write_encode(
+            context,
+            command_buffer,
+            &self.value,
+            &value,
+            self.len,
+            self.dtype(),
+            match self.dtype() {
+                DType::F32 => "kv_cache_write_f32",
+                DType::F16 => "kv_cache_write_f16",
+            },
+        )?;
         self.len += seq;
         Ok(())
     }

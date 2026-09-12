@@ -3,7 +3,7 @@ use crate::{
     metal::MetalContext,
     tensor::{DType, Tensor},
 };
-use ::metal::MTLSize;
+use metal::{CommandBufferRef, MTLSize};
 use std::{ffi::c_void, mem};
 
 pub fn kv_cache_write_f32(
@@ -12,14 +12,19 @@ pub fn kv_cache_write_f32(
     source: &Tensor,
     start: usize,
 ) -> Result<()> {
-    kv_cache_write(
+    let execution = crate::metal::MetalExecution::new(context);
+    let source = source.contiguous(context)?;
+    kv_cache_write_encode(
         context,
+        execution.command_buffer(),
         cache,
-        source,
+        &source,
         start,
         DType::F32,
         "kv_cache_write_f32",
-    )
+    )?;
+    execution.finish();
+    Ok(())
 }
 
 pub fn kv_cache_write_f16(
@@ -28,18 +33,24 @@ pub fn kv_cache_write_f16(
     source: &Tensor,
     start: usize,
 ) -> Result<()> {
-    kv_cache_write(
+    let execution = crate::metal::MetalExecution::new(context);
+    let source = source.contiguous(context)?;
+    kv_cache_write_encode(
         context,
+        execution.command_buffer(),
         cache,
-        source,
+        &source,
         start,
         DType::F16,
         "kv_cache_write_f16",
-    )
+    )?;
+    execution.finish();
+    Ok(())
 }
 
-fn kv_cache_write(
+pub(crate) fn kv_cache_write_encode(
     context: &MetalContext,
+    command_buffer: &CommandBufferRef,
     cache: &Tensor,
     source: &Tensor,
     start: usize,
@@ -78,13 +89,16 @@ fn kv_cache_write(
             max_seq_len: max_seq,
         });
     }
-    let source = source.contiguous(context)?;
     let pipeline = context.pipeline(
         include_str!("../../kernels/kv_cache_write.metal"),
         kernel_name,
     );
-    let command = context.command_queue.new_command_buffer();
-    let encoder = command.new_compute_command_encoder();
+    if !source.is_contiguous() {
+        return Err(TinyError::NonContiguousTensor(
+            "batched KV cache write requires a contiguous source".into(),
+        ));
+    }
+    let encoder = command_buffer.new_compute_command_encoder();
     encoder.set_compute_pipeline_state(pipeline.as_ref());
     encoder.set_buffer(0, Some(cache.metal_buffer()?.raw()), 0);
     encoder.set_buffer(1, Some(source.metal_buffer()?.raw()), 0);
@@ -103,7 +117,5 @@ fn kv_cache_write(
         MTLSize::new(source.numel().min(256) as u64, 1, 1),
     );
     encoder.end_encoding();
-    command.commit();
-    command.wait_until_completed();
     Ok(())
 }

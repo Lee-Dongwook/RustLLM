@@ -2,6 +2,7 @@ use crate::error::{Result, TinyError};
 
 use crate::metal::MetalContext;
 use crate::ops::rope;
+use metal::CommandBufferRef;
 
 use crate::tensor::{DType, Tensor};
 
@@ -126,6 +127,32 @@ impl RotaryEmbedding {
         }
 
         rope(context, input, &self.cos_table, &self.sin_table, start_pos)
+    }
+
+    pub(crate) fn forward_encode(
+        &self,
+        context: &MetalContext,
+        command_buffer: &CommandBufferRef,
+        input: &Tensor,
+        start_pos: usize,
+    ) -> Result<Tensor> {
+        if input.dtype() != DType::F16 || !input.is_contiguous() {
+            return Err(TinyError::UnsupportedDType(
+                "batched RoPE currently requires a contiguous F16 tensor".into(),
+            ));
+        }
+        let seq_len = input.dim(input.rank() - 2)?;
+        let output = crate::ops::rope_f16_encode(
+            context,
+            command_buffer,
+            input.metal_buffer()?,
+            self.cos_table.metal_buffer()?,
+            self.sin_table.metal_buffer()?,
+            seq_len,
+            self.head_dim,
+            start_pos,
+        )?;
+        Tensor::from_metal_buffer(output, input.shape().dims(), DType::F16)
     }
 }
 

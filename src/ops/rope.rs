@@ -1,11 +1,11 @@
 use std::ffi::c_void;
 use std::mem;
 
-use ::metal::MTLSize;
+use metal::{CommandBufferRef, MTLSize};
 
 use crate::error::{Result, TinyError};
 
-use crate::metal::{MetalBuffer, MetalContext};
+use crate::metal::{MetalBuffer, MetalContext, MetalExecution};
 use crate::tensor::{DType, Tensor};
 
 pub fn rope_f32(
@@ -136,6 +136,31 @@ pub fn rope_f16(
     head_dim: usize,
     start_pos: usize,
 ) -> Result<MetalBuffer> {
+    let execution = MetalExecution::new(context);
+    let output = rope_f16_encode(
+        context,
+        execution.command_buffer(),
+        input,
+        cos_table,
+        sin_table,
+        seq_len,
+        head_dim,
+        start_pos,
+    )?;
+    execution.finish();
+    Ok(output)
+}
+
+pub(crate) fn rope_f16_encode(
+    context: &MetalContext,
+    command_buffer: &CommandBufferRef,
+    input: &MetalBuffer,
+    cos_table: &MetalBuffer,
+    sin_table: &MetalBuffer,
+    seq_len: usize,
+    head_dim: usize,
+    start_pos: usize,
+) -> Result<MetalBuffer> {
     if head_dim == 0 || !head_dim.is_multiple_of(2) {
         return Err(TinyError::InvalidShape(format!(
             "RoPE head dimension must be positive and even, got {head_dim}"
@@ -168,7 +193,6 @@ pub fn rope_f16(
     let output = MetalBuffer::empty_with_element_size(context, input.len(), 2);
     let shader_source = include_str!("../../kernels/rope.metal");
     let pipeline = context.pipeline(shader_source, "rope_f16");
-    let command_buffer = context.command_queue.new_command_buffer();
     let encoder = command_buffer.new_compute_command_encoder();
     encoder.set_compute_pipeline_state(pipeline.as_ref());
     encoder.set_buffer(0, Some(input.raw()), 0);
@@ -226,8 +250,6 @@ pub fn rope_f16(
         MTLSize::new(total_pairs.min(256) as u64, 1, 1),
     );
     encoder.end_encoding();
-    command_buffer.commit();
-    command_buffer.wait_until_completed();
     Ok(output)
 }
 

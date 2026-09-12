@@ -1,6 +1,6 @@
 use std::{ffi::c_void, mem};
 
-use ::metal::MTLSize;
+use metal::MTLSize;
 
 use crate::{
     error::{Result, TinyError},
@@ -14,8 +14,18 @@ const TILE_SIZE: u64 = 16;
 /// Computes `Q × Kᵀ` without materializing KV heads to query-head count.
 pub fn gqa_qk_matmul(context: &MetalContext, q: &Tensor, k: &Tensor) -> Result<Tensor> {
     let (batch, q_heads, q_len, kv_heads, kv_len, head_dim) = validate_qk(q, k)?;
-    let q = contiguous(context, q)?;
-    let k = contiguous(context, k)?;
+    // A q_len=1 head permutation is layout-equivalent on device. Keep the
+    // view to avoid a decode-only copy; prefill still materializes it.
+    let q = if q_len == 1 {
+        q.clone()
+    } else {
+        contiguous(context, q)?
+    };
+    let k = if q_len == 1 {
+        k.clone()
+    } else {
+        contiguous(context, k)?
+    };
     let output = Tensor::empty(context, &[batch, q_heads, q_len, kv_len], q.dtype())?;
     let kernel = match q.dtype() {
         DType::F32 => "gqa_qk_f32",
@@ -32,6 +42,7 @@ pub fn gqa_qk_matmul(context: &MetalContext, q: &Tensor, k: &Tensor) -> Result<T
         kv_len,
         q_len,
         batch,
+        k.strides().values()[1] / head_dim,
     )?;
     Ok(output)
 }
@@ -40,7 +51,11 @@ pub fn gqa_qk_matmul(context: &MetalContext, q: &Tensor, k: &Tensor) -> Result<T
 pub fn gqa_pv_matmul(context: &MetalContext, probs: &Tensor, value: &Tensor) -> Result<Tensor> {
     let (batch, q_heads, q_len, kv_heads, kv_len, head_dim) = validate_pv(probs, value)?;
     let probs = contiguous(context, probs)?;
-    let value = contiguous(context, value)?;
+    let value = if q_len == 1 {
+        value.clone()
+    } else {
+        contiguous(context, value)?
+    };
     let output = Tensor::empty(context, &[batch, q_heads, q_len, head_dim], probs.dtype())?;
     let kernel = match probs.dtype() {
         DType::F32 => "gqa_pv_f32",
@@ -57,6 +72,7 @@ pub fn gqa_pv_matmul(context: &MetalContext, probs: &Tensor, value: &Tensor) -> 
         head_dim,
         q_len,
         batch,
+        value.strides().values()[1] / head_dim,
     )?;
     Ok(output)
 }
@@ -145,6 +161,7 @@ fn dispatch(
     output_width: usize,
     query_len: usize,
     batch: usize,
+    kv_capacity: usize,
 ) -> Result<()> {
     let [q_heads, kv_heads, q_len, kv_len, head_dim] = dimensions.map(|value| {
         u32::try_from(value)
@@ -163,9 +180,17 @@ fn dispatch(
     encoder.set_buffer(0, Some(left.metal_buffer()?.raw()), 0);
     encoder.set_buffer(1, Some(right.metal_buffer()?.raw()), 0);
     encoder.set_buffer(2, Some(output.metal_buffer()?.raw()), 0);
-    for (index, value) in [q_heads, kv_heads?, q_len?, kv_len?, head_dim?]
-        .iter()
-        .enumerate()
+    for (index, value) in [
+        q_heads,
+        kv_heads?,
+        q_len?,
+        kv_len?,
+        head_dim?,
+        u32::try_from(kv_capacity)
+            .map_err(|_| TinyError::InvalidShape("GQA KV capacity exceeds u32".into()))?,
+    ]
+    .iter()
+    .enumerate()
     {
         encoder.set_bytes(
             (index + 3) as u64,

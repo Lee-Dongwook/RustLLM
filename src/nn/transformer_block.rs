@@ -122,9 +122,9 @@ impl TransformerBlock {
 
         let hidden = x.add(context, &attention)?;
 
-        // INT8 decode keeps the complete SwiGLU tail and its residual in one
-        // command buffer. Dense paths retain their established synchronous API.
-        if x.dim(0)? == 1 && self.mlp.is_quantized() {
+        // Decode keeps the complete F16/INT8 SwiGLU tail and its residual in
+        // one command buffer. F32 retains the established synchronous path.
+        if x.dim(0)? == 1 && (self.mlp.is_quantized() || self.dtype() == DType::F16) {
             let execution = MetalExecution::new(context);
             let normalized =
                 self.mlp_norm
@@ -156,7 +156,7 @@ impl TransformerBlock {
         // Keep profiling on the same decode execution path as production. The
         // per-stage CPU timings are no longer meaningful once several kernels
         // share a command buffer, so account for this block as attention time.
-        if x.dim(0)? == 1 && self.mlp.is_quantized() {
+        if x.dim(0)? == 1 && (self.mlp.is_quantized() || self.dtype() == DType::F16) {
             let started = Instant::now();
             let output = self.forward_with_cache(context, x, cache)?;
             profile.attention += started.elapsed();
