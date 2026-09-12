@@ -248,6 +248,27 @@ impl SelfAttention {
         x: &Tensor,
         cache: &mut LayerKvCache,
     ) -> Result<Tensor> {
+        let execution = MetalExecution::new(context);
+
+        let output =
+            self.forward_with_cache_encode(context, execution.command_buffer(), x, cache)?;
+
+        execution.finish();
+
+        Ok(output)
+    }
+
+    /// Encodes a full attention step into `command_buffer`.
+    ///
+    /// The cache write and the QK read of that write share the buffer;
+    /// encoders run in submission order, so the read sees the write.
+    pub(crate) fn forward_with_cache_encode(
+        &self,
+        context: &MetalContext,
+        command_buffer: &CommandBufferRef,
+        x: &Tensor,
+        cache: &mut LayerKvCache,
+    ) -> Result<Tensor> {
         self.validate_input_dtype(x)?;
 
         if cache.dtype() != self.dtype() {
@@ -277,12 +298,6 @@ impl SelfAttention {
 
         let start_pos = cache.len();
 
-        // One command buffer covers projections, RoPE, the cache write and the
-        // attention core. Encoders run in submission order, so the QK read of
-        // the cache sees the write encoded just above it.
-        let execution = MetalExecution::new(context);
-        let command_buffer = execution.command_buffer();
-
         let (q, k, v) =
             self.project_qkv_rope_encode(context, command_buffer, x, seq_len, start_pos)?;
         cache.append_encode(context, command_buffer, k, v)?;
@@ -292,12 +307,8 @@ impl SelfAttention {
 
         let attention =
             self.attention_core_encode(context, command_buffer, &q, &all_k, &all_v, start_pos)?;
-        let output =
-            self.merge_heads_and_project_encode(context, command_buffer, &attention, seq_len)?;
 
-        execution.finish();
-
-        Ok(output)
+        self.merge_heads_and_project_encode(context, command_buffer, &attention, seq_len)
     }
 
     /// Encodes the head merge and the output projection into `command_buffer`.
