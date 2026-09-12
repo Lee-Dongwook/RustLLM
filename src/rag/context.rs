@@ -20,26 +20,12 @@ pub fn build_rag_prompt(question: &str, retrieved: &[RetrievedChunk]) -> Result<
 
     let mut prompt = String::new();
 
-    prompt.push_str("Answer the question using only the retrieved context below.\n");
+    prompt.push_str("Use the context to answer the question.\n\n");
 
-    prompt.push_str(
-        "If the retrieved context does not contain enough information, say that the information is not available in the provided context.\n",
-    );
-
-    prompt.push_str("Do not invent facts that are not supported by the context.\n\n");
-
-    prompt.push_str("Retrieved context:\n\n");
+    prompt.push_str("Context:\n");
 
     for result in retrieved {
-        let chunk = result.chunk();
-
-        prompt.push_str(&format!(
-            "[Source: {}, chunk {}]\n",
-            chunk.source().display(),
-            chunk.index(),
-        ));
-
-        prompt.push_str(chunk.text().trim());
+        prompt.push_str(result.chunk().text().trim());
 
         prompt.push_str("\n\n");
     }
@@ -47,6 +33,8 @@ pub fn build_rag_prompt(question: &str, retrieved: &[RetrievedChunk]) -> Result<
     prompt.push_str("Question:\n");
 
     prompt.push_str(question);
+
+    prompt.push_str("\nAnswer:");
 
     Ok(prompt)
 }

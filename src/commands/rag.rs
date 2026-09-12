@@ -80,10 +80,7 @@ pub fn execute(args: RagArgs) -> Result<()> {
     let conversation = match args.system.as_deref() {
         Some(system) if !system.trim().is_empty() => Conversation::with_system(system),
 
-        _ => Conversation::with_system(
-            "You are a document-grounded assistant. \
-                     Answer questions using only the retrieved context.",
-        ),
+        _ => Conversation::with_system("Answer questions using the provided context."),
     };
 
     let template = SmolLm2Template::new();
@@ -144,6 +141,8 @@ pub fn execute(args: RagArgs) -> Result<()> {
             chunk.end_char(),
             retrieved.score(),
         );
+
+        eprintln!("     {}", chunk.text().replace('\n', " "),);
     }
 
     eprintln!();
