@@ -19,6 +19,9 @@ Apple Metal GPU에서 소형 Transformer 언어 모델의 **추론 과정**을 �
 - `tokenizer.model` 기반 SentencePiece와 `tokenizer.json` 기반 Hugging Face encode/decode
 - greedy 및 temperature/top-k/top-p seeded autoregressive generation, EOS 종료 처리
 - 레이어별 Key/Value cache를 이용한 토큰 단위 디코딩
+- SmolLM2 ChatML 템플릿 기반의 대화형 `chat` CLI
+  - 다중 턴 대화 이력 유지, 토큰 스트리밍 출력, 시스템 프롬프트 지정
+  - `/clear`로 대화 초기화, `/exit` 또는 `/quit`으로 종료
 - import 시 지원되는 원본 토크나이저 파일을 변환 모델 폴더에 함께 복사
 - 모델 설정을 빠르게 확인하는 `inspect` 명령
 
@@ -70,6 +73,52 @@ SentencePiece decode
 ```
 
 `run`은 tokenizer와 모델의 vocabulary 크기를 대조합니다. 프롬프트는 한 번만 전체 forward하고, 이후 생성 토큰은 레이어별 KV cache에 Key/Value를 누적해 한 토큰씩 forward합니다. 따라서 이전 토큰 전체를 매번 다시 계산하지 않습니다. 프롬프트와 생성 토큰의 총길이는 모델 context length를 넘지 않도록 제한됩니다. 상태 메시지는 stderr로, 생성된 이야기만 stdout으로 출력합니다.
+
+## 대화형 Chat CLI
+
+`chat`은 SmolLM2의 ChatML 형식(`system`/`user`/`assistant`)으로 프롬프트를 구성해 터미널에서 여러 차례 대화할 수 있게 합니다. 현재 이 템플릿에 맞는 SmolLM2 계열 모델을 사용해야 합니다.
+
+```bash
+cargo run -- chat \
+  --model models/SmolLM2-135M \
+  --dtype f16 \
+  --max-tokens 128
+```
+
+시작하면 `>` 프롬프트에 메시지를 입력합니다. 답변은 생성되는 대로 `assistant>` 뒤에 출력되며, 이전 대화 내용은 다음 질문의 문맥으로 유지됩니다.
+
+```text
+RustLLM Chat
+Type /exit to quit, /clear to reset.
+
+> Hello!
+assistant> Hello! How can I help you?
+
+> /clear
+conversation cleared.
+
+> /exit
+```
+
+기본 시스템 프롬프트 대신 직접 역할을 지정하려면 `--system`을 사용합니다.
+
+```bash
+cargo run -- chat \
+  --model models/SmolLM2-135M \
+  --dtype f16 \
+  --system "Answer concisely in Korean." \
+  --temperature 0.7 \
+  --top-k 40 \
+  --top-p 0.95 \
+  --seed 42
+```
+
+- `--max-tokens`: 한 답변에서 생성할 최대 토큰 수입니다. 남은 모델 context length를 넘지 않도록 자동 제한됩니다.
+- `--temperature`, `--top-k`, `--top-p`, `--seed`: `run`과 동일한 샘플링 옵션입니다. `--temperature 0`은 greedy decoding입니다.
+- `/clear`: 시스템 프롬프트는 유지한 채 현재 대화 이력만 초기화합니다.
+- `/exit`, `/quit`: Chat CLI를 종료합니다.
+
+각 질문은 누적된 대화 이력 전체를 포함해 다시 생성합니다. 긴 대화를 계속하면 모델의 context length에 도달할 수 있으므로, 그때는 `/clear`로 새 대화를 시작하세요.
 
 ## Hugging Face 모델 변환
 
@@ -194,6 +243,9 @@ cargo build --release
 │   ├── tokenizer_config.json
 │   └── special_tokens_map.json
 ├── src/
+│   ├── chat/            # 대화 이력, ChatML 템플릿, chat 추론 연결
+│   ├── cli/             # run/chat/import/inspect 명령행 인자
+│   ├── commands/        # 각 CLI 명령 실행 로직
 │   ├── generation/      # greedy sampler와 생성 루프
 │   ├── metal/           # Metal device, command queue, pipeline cache
 │   ├── model/           # 설정, 가중치 포맷, Transformer 조립
@@ -202,7 +254,8 @@ cargo build --release
 │   ├── tensor/          # Tensor, shape, stride, storage
 │   ├── tokenizer/       # SentencePiece와 문자 토크나이저 구현
 │   ├── error.rs         # 프로젝트 오류 타입
-│   └── main.rs          # 예제 추론 실행 진입점
+│   ├── lib.rs           # 재사용 가능한 라이브러리 모듈 공개
+│   └── main.rs          # CLI 진입점
 ├── Cargo.toml
 └── README.md
 ```
@@ -245,7 +298,7 @@ cargo test
 cargo run -- run --model models/llama2.c-stories110M --prompt "Once upon a time"
 ```
 
-`cargo test`는 텐서/Metal 연산, Transformer, KV Cache, 샘플러, 토크나이저 선택과 가중치 파일 저장·로드를 확인합니다. Hugging Face 모델이 필요한 SentencePiece 통합 테스트는 모델을 내려받은 뒤 `cargo test -- --ignored`로 실행합니다. `run`은 Apple Metal GPU가 필요합니다.
+`cargo test`는 텐서/Metal 연산, Transformer, KV Cache, 샘플러, 토크나이저 선택, ChatML 프롬프트 구성, 가중치 파일 저장·로드를 확인합니다. Hugging Face 모델이 필요한 SentencePiece 통합 테스트는 모델을 내려받은 뒤 `cargo test -- --ignored`로 실행합니다. `run`과 `chat`은 Apple Metal GPU가 필요합니다.
 
 `import` 실행 시에는 `source tensors`, `converted tensors`, `copied <tokenizer-file>`이 출력되는지 확인합니다. 문제가 생기면 아래를 우선 확인하세요.
 
