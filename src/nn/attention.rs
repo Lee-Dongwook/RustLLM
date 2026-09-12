@@ -300,9 +300,10 @@ impl SelfAttention {
         let start_pos = cache.len();
 
         let started = Instant::now();
-        let q = self.q_proj.forward(context, x)?;
-        let k = self.k_proj.forward(context, x)?;
-        let v = self.v_proj.forward(context, x)?;
+        let execution = MetalExecution::new(context);
+        let (q, k, v) = self.project_qkv_encode(context, execution.command_buffer(), x)?;
+        
+        execution.finish();
         profile.qkv_projection += started.elapsed();
 
         let started = Instant::now();
@@ -364,7 +365,7 @@ mod tests {
     use super::{Linear, RotaryEmbedding, SelfAttention};
     use crate::{
         error::TinyError,
-        metal::MetalContext,
+        metal::{MetalExecution, MetalContext},
         model::LayerKvCache,
         tensor::{DType, Tensor},
     };
@@ -626,4 +627,120 @@ mod tests {
                 .is_err()
         );
     }
+
+    #[test]
+fn batched_qkv_projection_matches_sync_path() {
+    let Some(context) =
+        metal_context()
+    else {
+        return;
+    };
+
+    /*
+     * F16으로 테스트.
+     *
+     * Linear::forward_encode()의
+     * Dense F16 path도 검증할 수 있다.
+     */
+    let attention =
+        attention(&context)
+            .to_dtype(
+                &context,
+                DType::F16,
+            )
+            .unwrap();
+
+    let input =
+        Tensor::from_f32_slice(
+            &context,
+            &[
+                0.1,
+                0.2,
+                0.3,
+                0.4,
+                -0.2,
+                0.5,
+                0.7,
+                -0.1,
+            ],
+            &[2, 4],
+        )
+        .unwrap()
+        .to_dtype(
+            &context,
+            DType::F16,
+        )
+        .unwrap();
+
+    /*
+     * 기존 synchronous reference
+     */
+    let expected_q =
+        attention
+            .q_proj
+            .forward(
+                &context,
+                &input,
+            )
+            .unwrap();
+
+    let expected_k =
+        attention
+            .k_proj
+            .forward(
+                &context,
+                &input,
+            )
+            .unwrap();
+
+    let expected_v =
+        attention
+            .v_proj
+            .forward(
+                &context,
+                &input,
+            )
+            .unwrap();
+
+    /*
+     * batched path
+     */
+    let execution =
+        MetalExecution::new(
+            &context,
+        );
+
+    let (actual_q, actual_k, actual_v) =
+        attention
+            .project_qkv_encode(
+                &context,
+                execution.command_buffer(),
+                &input,
+            )
+            .unwrap();
+
+    /*
+     * Q/K/V 세 개를 encode하고
+     * 여기서 단 한 번 commit/wait.
+     */
+    execution.finish();
+
+    assert_close(
+        &expected_q,
+        &actual_q,
+        0.01,
+    );
+
+    assert_close(
+        &expected_k,
+        &actual_k,
+        0.01,
+    );
+
+    assert_close(
+        &expected_v,
+        &actual_v,
+        0.01,
+    );
+}
 }
