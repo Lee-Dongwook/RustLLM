@@ -36,6 +36,8 @@ pub enum TinyError {
     MissingWeight(String),
 
     Metal(String),
+
+    StructuredOutput(String),
 }
 
 impl fmt::Display for TinyError {
@@ -113,6 +115,10 @@ impl fmt::Display for TinyError {
 
             TinyError::Tokenizer(message) => {
                 write!(f, "tokenizer error: {message}")
+            }
+
+            TinyError::StructuredOutput(message) => {
+                write!(f, "structured output error: {message}")
             }
         }
     }
