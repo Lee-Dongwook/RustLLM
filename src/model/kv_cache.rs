@@ -1,7 +1,7 @@
 use crate::{
     error::{Result, TinyError},
-    metal::MetalContext,
-    ops::{kv_cache_write_f16, kv_cache_write_f32},
+    metal::{MetalContext, MetalExecution},
+    ops::{kv_cache_write_f16_encode, kv_cache_write_f32_encode},
     tensor::{DType, Tensor},
 };
 use metal::CommandBufferRef;
@@ -101,11 +101,10 @@ impl LayerKvCache {
         self.value.narrow(2, 0, self.len)
     }
     pub fn append(&mut self, context: &MetalContext, key: Tensor, value: Tensor) -> Result<()> {
-        self.validate_append(&key, &value)?;
-        let seq = key.dim(2)?;
-        append_tensor(context, &self.key, &key, self.len)?;
-        append_tensor(context, &self.value, &value, self.len)?;
-        self.len += seq;
+        let execution = MetalExecution::new(context);
+
+        self.append_encode(context, execution.command_buffer(), key, value)?;
+        execution.finish();
         Ok(())
     }
 
@@ -117,47 +116,31 @@ impl LayerKvCache {
         value: Tensor,
     ) -> Result<()> {
         self.validate_append(&key, &value)?;
-        let seq = key.dim(2)?;
-        crate::ops::kv_cache_write_encode(
-            context,
-            command_buffer,
-            &self.key,
-            &key,
-            self.len,
-            self.dtype(),
-            match self.dtype() {
-                DType::F32 => "kv_cache_write_f32",
-                DType::F16 => "kv_cache_write_f16",
-            },
-        )?;
-        crate::ops::kv_cache_write_encode(
-            context,
-            command_buffer,
-            &self.value,
-            &value,
-            self.len,
-            self.dtype(),
-            match self.dtype() {
-                DType::F32 => "kv_cache_write_f32",
-                DType::F16 => "kv_cache_write_f16",
-            },
-        )?;
-        self.len += seq;
+        let seq_len = key.dim(2)?;
+        let start_pos = self.len;
+        let new_len = start_pos.checked_add(seq_len).ok_or_else(|| {
+            TinyError::InvalidShape("KV cache length overflow".into())
+        })?;
+
+        let key = key.contiguous_encode(context, command_buffer)?;
+        let value = value.contiguous_encode(context, command_buffer)?;
+
+        match self.dtype() {
+            DType::F32 => {
+                kv_cache_write_f32_encode(context, command_buffer, &self.key, &key, start_pos)?;
+                kv_cache_write_f32_encode(context, command_buffer, &self.value, &value, start_pos)?;
+            }
+            DType::F16 => {
+                kv_cache_write_f16_encode(context, command_buffer, &self.key, &key, start_pos)?;
+                kv_cache_write_f16_encode(context, command_buffer, &self.value, &value, start_pos)?;
+            }
+        }
+
+        self.len = new_len;
         Ok(())
     }
 }
 
-fn append_tensor(
-    context: &MetalContext,
-    cache: &Tensor,
-    source: &Tensor,
-    start: usize,
-) -> Result<()> {
-    match source.dtype() {
-        DType::F32 => kv_cache_write_f32(context, cache, source, start),
-        DType::F16 => kv_cache_write_f16(context, cache, source, start),
-    }
-}
 pub struct KvCache {
     layers: Vec<LayerKvCache>,
     max_seq_len: usize,
@@ -284,6 +267,26 @@ mod tests {
 
         assert_eq!(cache.len(), 3);
         assert_eq!(cache.key().unwrap().shape().dims(), &[1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn append_encode_updates_the_logical_prefix_after_submission() {
+        let Some(context) = metal_context() else {
+            return;
+        };
+        let mut cache = LayerKvCache::new(&context, 2, 8, 2, DType::F16).unwrap();
+        let key = f16_tensor(&context, &[1.; 4], &[1, 2, 1, 2]);
+        let value = f16_tensor(&context, &[2.; 4], &[1, 2, 1, 2]);
+        let execution = crate::metal::MetalExecution::new(&context);
+
+        cache
+            .append_encode(&context, execution.command_buffer(), key, value)
+            .unwrap();
+        execution.finish();
+
+        assert_eq!(cache.len(), 1);
+        assert_eq!(cache.key().unwrap().shape().dims(), &[1, 2, 1, 2]);
+        assert_eq!(cache.value().unwrap().shape().dims(), &[1, 2, 1, 2]);
     }
 
     #[test]

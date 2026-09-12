@@ -14,17 +14,33 @@ pub fn kv_cache_write_f32(
 ) -> Result<()> {
     let execution = crate::metal::MetalExecution::new(context);
     let source = source.contiguous(context)?;
-    kv_cache_write_encode(
+    kv_cache_write_f32_encode(
         context,
         execution.command_buffer(),
         cache,
         &source,
         start,
-        DType::F32,
-        "kv_cache_write_f32",
     )?;
     execution.finish();
     Ok(())
+}
+
+pub(crate) fn kv_cache_write_f32_encode(
+    context: &MetalContext,
+    command_buffer: &CommandBufferRef,
+    cache: &Tensor,
+    source: &Tensor,
+    start: usize,
+) -> Result<()> {
+    kv_cache_write_encode(
+        context,
+        command_buffer,
+        cache,
+        source,
+        start,
+        DType::F32,
+        "kv_cache_write_f32",
+    )
 }
 
 pub fn kv_cache_write_f16(
@@ -35,17 +51,33 @@ pub fn kv_cache_write_f16(
 ) -> Result<()> {
     let execution = crate::metal::MetalExecution::new(context);
     let source = source.contiguous(context)?;
-    kv_cache_write_encode(
+    kv_cache_write_f16_encode(
         context,
         execution.command_buffer(),
         cache,
         &source,
         start,
-        DType::F16,
-        "kv_cache_write_f16",
     )?;
     execution.finish();
     Ok(())
+}
+
+pub(crate) fn kv_cache_write_f16_encode(
+    context: &MetalContext,
+    command_buffer: &CommandBufferRef,
+    cache: &Tensor,
+    source: &Tensor,
+    start: usize,
+) -> Result<()> {
+    kv_cache_write_encode(
+        context,
+        command_buffer,
+        cache,
+        source,
+        start,
+        DType::F16,
+        "kv_cache_write_f16",
+    )
 }
 
 pub(crate) fn kv_cache_write_encode(

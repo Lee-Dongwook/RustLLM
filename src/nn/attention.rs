@@ -250,9 +250,8 @@ impl SelfAttention {
             seq_len,
             start_pos,
         )?;
+        cache.append_encode(context, execution.command_buffer(), k, v)?;
         execution.finish();
-
-        cache.append(context, k, v)?;
 
         let all_k = cache.key()?;
         let all_v = cache.value()?;
@@ -307,11 +306,11 @@ impl SelfAttention {
             start_pos,
         )?;
         
+        cache.append_encode(context, execution.command_buffer(), k, v)?;
         execution.finish();
         profile.qkv_projection += started.elapsed();
 
         let started = Instant::now();
-        cache.append(context, k, v)?;
         let all_k = cache.key()?;
         let all_v = cache.value()?;
         let scores = if self.num_heads != self.num_kv_heads {

@@ -127,12 +127,14 @@ impl Tensor {
             }
 
             DType::F32 => {
-                Err(
-                TinyError::UnsupportedDType(
-                    "batched contiguous currently supports only F16"
-                        .into(),
-                ),
-              )
+                let buffer = crate::ops::materialize_contiguous_f32_encode(
+                    context,
+                    command_buffer,
+                    self.metal_buffer()?,
+                    self.shape.dims(),
+                    self.strides.values(),
+                )?;
+                Tensor::from_metal_buffer(buffer, self.shape.dims(), DType::F32)
             }
         }
     }
