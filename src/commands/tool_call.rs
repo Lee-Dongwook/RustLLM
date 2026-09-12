@@ -1,14 +1,19 @@
 use tiny_metal_llm::{
     chat::{Conversation, templates::SmolLm2Template},
+    document::{ChunkConfig, chunk_document, load_document},
     error::{Result, TinyError},
     generation::GenerationConfig,
     metal::MetalContext,
     model::Transformer,
+    retrieval::LexicalRetriever,
     structured::StructuredRetryConfig,
     tensor::DType,
     tokenizer::{ModelTokenizer, Tokenizer},
     tool_calling::execute_tool_calling,
-    tools::{ToolRegistry, builtin::CalculatorTool},
+    tools::{
+        ToolRegistry,
+        builtin::{CalculatorTool, DocumentSearchTool},
+    },
 };
 
 use crate::cli::{DTypeArg, ToolCallArgs};
@@ -43,7 +48,44 @@ pub fn execute(args: ToolCallArgs) -> Result<()> {
      */
     let mut registry = ToolRegistry::new();
 
+    /*
+     * Built-in calculator는 항상 사용 가능.
+     */
     registry.register(CalculatorTool::new()?)?;
+
+    /*
+     * --document가 주어진 경우에만
+     * document_search Tool을 활성화한다.
+     */
+    if let Some(document_path) = args.document.as_ref() {
+        eprintln!("loading document: {}", document_path.display());
+
+        let document = load_document(document_path)?;
+
+        let chunk_config = ChunkConfig::new(args.chunk_size, args.overlap)?;
+
+        let chunks = chunk_document(&document, &chunk_config)?;
+
+        eprintln!("document chunks: {}", chunks.len());
+
+        let retriever = LexicalRetriever::new(chunks)?;
+
+        let document_search = DocumentSearchTool::new(retriever, args.retrieve_top_k)?;
+
+        registry.register(document_search)?;
+    }
+
+    let mut tool_names = registry.iter().map(|tool| tool.name()).collect::<Vec<_>>();
+
+    tool_names.sort_unstable();
+
+    eprintln!("available tools:");
+
+    for name in tool_names {
+        eprintln!("  - {name}");
+    }
+
+    eprintln!();
 
     /*
      * Chat

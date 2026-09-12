@@ -216,6 +216,19 @@ pub struct ToolCallArgs {
     #[arg(long)]
     pub request: String,
 
+    /// Optional document used by the document_search tool.
+    #[arg(long, short = 'd')]
+    pub document: Option<PathBuf>,
+
+    #[arg(long, default_value_t = 512)]
+    pub chunk_size: usize,
+
+    #[arg(long, default_value_t = 64)]
+    pub overlap: usize,
+
+    #[arg(long, default_value_t = 2)]
+    pub retrieve_top_k: usize,
+
     #[arg(long, value_enum, default_value_t = DTypeArg::F16)]
     pub dtype: DTypeArg,
 
