@@ -277,36 +277,24 @@ impl SelfAttention {
 
         let start_pos = cache.len();
 
+        // One command buffer covers projections, RoPE, the cache write and the
+        // attention core. Encoders run in submission order, so the QK read of
+        // the cache sees the write encoded just above it.
         let execution = MetalExecution::new(context);
+        let command_buffer = execution.command_buffer();
+
         let (q, k, v) =
-        self.project_qkv_rope_encode(
-            context,
-            execution.command_buffer(),
-            x,
-            seq_len,
-            start_pos,
-        )?;
-        cache.append_encode(context, execution.command_buffer(), k, v)?;
-        execution.finish();
+            self.project_qkv_rope_encode(context, command_buffer, x, seq_len, start_pos)?;
+        cache.append_encode(context, command_buffer, k, v)?;
 
         let all_k = cache.key()?;
         let all_v = cache.value()?;
 
-        let execution = MetalExecution::new(context);
-        let attention = self.attention_core_encode(
-            context,
-            execution.command_buffer(),
-            &q,
-            &all_k,
-            &all_v,
-            start_pos,
-        )?;
-        let output = self.merge_heads_and_project_encode(
-            context,
-            execution.command_buffer(),
-            &attention,
-            seq_len,
-        )?;
+        let attention =
+            self.attention_core_encode(context, command_buffer, &q, &all_k, &all_v, start_pos)?;
+        let output =
+            self.merge_heads_and_project_encode(context, command_buffer, &attention, seq_len)?;
+
         execution.finish();
 
         Ok(output)
@@ -554,6 +542,34 @@ mod tests {
 
         assert_eq!(cache.key().unwrap().shape().dims(), &[1, 1, 2, 4]);
         assert_eq!(output.shape().dims(), &[2, 12]);
+    }
+
+    #[test]
+    fn decode_step_submits_one_command_buffer() {
+        let Some(context) = metal_context() else {
+            return;
+        };
+        let attention = attention(&context).to_dtype(&context, DType::F16).unwrap();
+        let mut cache = LayerKvCache::new(&context, 2, 8, 2, DType::F16).unwrap();
+        let token = Tensor::from_f32_slice(&context, &[0.1, 0.2, 0.3, 0.4], &[1, 4])
+            .unwrap()
+            .to_dtype(&context, DType::F16)
+            .unwrap();
+
+        // Warm the prefix so the decode step reads a non-empty cache.
+        attention
+            .forward_with_cache(&context, &token, &mut cache)
+            .unwrap();
+
+        context.begin_decode_submission_profile();
+        attention
+            .forward_with_cache(&context, &token, &mut cache)
+            .unwrap();
+        let profile = context.take_decode_submission_profile().unwrap();
+
+        assert_eq!(profile.command_buffers, 1);
+        assert_eq!(profile.commits, 1);
+        assert_eq!(profile.waits, 1);
     }
 
     #[test]
