@@ -59,7 +59,7 @@ pub struct DocumentChunk {
 }
 
 impl DocumentChunk {
-    fn new(
+    pub(crate) fn new(
         index: usize,
         source: impl Into<PathBuf>,
         start_char: usize,
