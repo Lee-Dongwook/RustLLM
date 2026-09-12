@@ -1,5 +1,6 @@
 pub mod benchmark;
 pub mod chat;
+pub mod document;
 pub mod error;
 pub mod generation;
 pub mod import;
