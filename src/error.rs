@@ -38,6 +38,8 @@ pub enum TinyError {
     Metal(String),
 
     StructuredOutput(String),
+
+    Tool(String),
 }
 
 impl fmt::Display for TinyError {
@@ -119,6 +121,10 @@ impl fmt::Display for TinyError {
 
             TinyError::StructuredOutput(message) => {
                 write!(f, "structured output error: {message}")
+            }
+
+            TinyError::Tool(message) => {
+                write!(f, "tool error: {message}")
             }
         }
     }

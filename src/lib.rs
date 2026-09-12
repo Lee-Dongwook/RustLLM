@@ -14,3 +14,4 @@ pub mod retrieval;
 pub mod structured;
 pub mod tensor;
 pub mod tokenizer;
+pub mod tools;
