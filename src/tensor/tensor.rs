@@ -1,11 +1,11 @@
 use crate::ops::{
     attention_scale_mask_f16, attention_scale_mask_f32, batched_matmul_f16, batched_matmul_f32,
     cast, materialize_contiguous_f16, materialize_contiguous_f32, matmul_f16, matmul_f32,
-    softmax_f16, softmax_f32,
+    softmax_f16, softmax_f32, materialize_contiguous_f16_encode,
 };
 use crate::tensor::{gqa_matmul, repeat_kv};
 use std::sync::Arc;
-
+use ::metal::CommandBufferRef;
 use crate::error::{Result, TinyError};
 
 use crate::metal::{MetalBuffer, MetalContext};
@@ -97,6 +97,44 @@ impl Tensor {
             strides,
             dtype: self.dtype,
         })
+    }
+
+    pub(crate) fn contiguous_encode(
+        &self,
+        context: &MetalContext,
+        command_buffer: &CommandBufferRef,
+    ) -> Result<Self> {
+        if self.is_contiguous() {
+            return Ok(self.clone());
+        }
+
+        match self.dtype {
+            DType::F16 => {
+                let buffer = 
+                    materialize_contiguous_f16_encode(
+                        context, 
+                        command_buffer, 
+                        self.metal_buffer()?, 
+                        self.shape.dims(), 
+                        self.strides.values(),
+                    )?;
+                
+                Tensor::from_metal_buffer(
+                    buffer, 
+                    self.shape.dims(), 
+                    DType::F16,
+                )
+            }
+
+            DType::F32 => {
+                Err(
+                TinyError::UnsupportedDType(
+                    "batched contiguous currently supports only F16"
+                        .into(),
+                ),
+              )
+            }
+        }
     }
 
     pub fn transpose(&self, dim_a: usize, dim_b: usize) -> Result<Self> {

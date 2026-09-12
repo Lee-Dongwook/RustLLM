@@ -1,11 +1,11 @@
 use std::ffi::c_void;
 use std::mem;
 
-use ::metal::MTLSize;
+use ::metal::{MTLSize, CommandBufferRef};
 
 use crate::error::{Result, TinyError};
 
-use crate::metal::{MetalBuffer, MetalContext};
+use crate::metal::{MetalBuffer, MetalContext, MetalExecution};
 
 pub fn materialize_contiguous_f32(
     context: &MetalContext,
@@ -102,11 +102,36 @@ pub fn materialize_contiguous_f16(
     dims: &[usize],
     strides: &[usize],
 ) -> Result<MetalBuffer> {
-    materialize_contiguous(context, source, dims, strides, 2, "contiguous_f16")
+    let execution = MetalExecution::new(context);
+
+    let result = materialize_contiguous_f16_encode(context, execution.command_buffer(), source, dims, strides,)?;
+
+    execution.finish();
+
+    Ok(result)
 }
 
-fn materialize_contiguous(
+pub(crate) fn materialize_contiguous_f16_encode(
     context: &MetalContext,
+    command_buffer: &CommandBufferRef,
+    source: &MetalBuffer,
+    dims: &[usize],
+    strides: &[usize],
+) -> Result<MetalBuffer> {
+    materialize_contiguous_encode(
+        context,
+        command_buffer,
+        source,
+        dims,
+        strides,
+        2,
+        "contiguous_f16",
+    )
+}
+
+fn materialize_contiguous_encode(
+    context: &MetalContext,
+    command_buffer: &CommandBufferRef,
     source: &MetalBuffer,
     dims: &[usize],
     strides: &[usize],
@@ -143,7 +168,6 @@ fn materialize_contiguous(
         .map_err(|_| TinyError::InvalidShape("tensor element count exceeds u32".to_string()))?;
 
     let pipeline = context.pipeline(include_str!("../../kernels/contiguous.metal"), kernel_name);
-    let command_buffer = context.command_queue.new_command_buffer();
     let encoder = command_buffer.new_compute_command_encoder();
     encoder.set_compute_pipeline_state(pipeline.as_ref());
     encoder.set_buffer(0, Some(source.raw()), 0);
@@ -173,7 +197,5 @@ fn materialize_contiguous(
         MTLSize::new(numel.min(256) as u64, 1, 1),
     );
     encoder.end_encoding();
-    command_buffer.commit();
-    command_buffer.wait_until_completed();
     Ok(result)
 }

@@ -136,11 +136,16 @@ impl RotaryEmbedding {
         input: &Tensor,
         start_pos: usize,
     ) -> Result<Tensor> {
-        if input.dtype() != DType::F16 || !input.is_contiguous() {
-            return Err(TinyError::UnsupportedDType(
-                "batched RoPE currently requires a contiguous F16 tensor".into(),
-            ));
+        if input.dtype() != DType::F16 {
+        return Err(
+        TinyError::UnsupportedDType(
+            "batched RoPE currently requires F16 input"
+                .into(),
+        ),
+        );
         }
+
+        let input = input.contiguous_encode(context, command_buffer)?;
         let seq_len = input.dim(input.rank() - 2)?;
         let output = crate::ops::rope_f16_encode(
             context,

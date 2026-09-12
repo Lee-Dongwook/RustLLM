@@ -6,6 +6,7 @@ use crate::profile::DecodeProfile;
 use crate::tensor::{DType, Tensor};
 use std::time::Instant;
 use ::metal::CommandBufferRef;
+use rand::seq;
 
 use super::{Linear, RotaryEmbedding};
 
@@ -185,6 +186,26 @@ impl SelfAttention {
         Ok((q, k, v))
     }
 
+    fn project_qkv_rope_encode(
+        &self,
+        context: &MetalContext,
+        command_buffer: &CommandBufferRef,
+        input: &Tensor,
+        seq_len: usize,
+        start_pos: usize,
+    ) -> Result<(Tensor, Tensor, Tensor)> {
+        let (q, k, v) = self.project_qkv_encode(context, command_buffer, input)?;
+
+        let q = self.prepare_heads(&q, seq_len, self.num_heads)?;
+        let k = self.prepare_heads(&k, seq_len, self.num_kv_heads)?;
+        let v = self.prepare_heads(&v, seq_len, self.num_kv_heads)?;
+
+        let q = self.rope.forward_encode(context, command_buffer, &q, start_pos)?;
+        let k = self.rope.forward_encode(context, command_buffer, &k, start_pos)?;
+
+        Ok((q, k, v))
+    }
+
     pub fn forward_with_cache(
         &self,
         context: &MetalContext,
@@ -222,37 +243,14 @@ impl SelfAttention {
 
         let execution = MetalExecution::new(context);
         let (q, k, v) =
-        self.project_qkv_encode(
+        self.project_qkv_rope_encode(
             context,
             execution.command_buffer(),
             x,
+            seq_len,
+            start_pos,
         )?;
         execution.finish();
-        // --------------------------------------------
-        // [S, hidden]
-        //
-        // ↓
-        //
-        // [1, S, H, D]
-        //
-        // ↓ permute
-        //
-        // [1, H, S, D]
-        // --------------------------------------------
-
-        let q = self.prepare_heads(&q, seq_len, self.num_heads)?;
-        let k = self.prepare_heads(&k, seq_len, self.num_kv_heads)?;
-        let v = self.prepare_heads(&v, seq_len, self.num_kv_heads)?;
-
-        // --------------------------------------------
-        // RoPE
-        //
-        // 여기 start_pos가 핵심
-        // --------------------------------------------
-
-        let q = self.rope.forward(context, &q, start_pos)?;
-
-        let k = self.rope.forward(context, &k, start_pos)?;
 
         cache.append(context, k, v)?;
 
@@ -301,17 +299,18 @@ impl SelfAttention {
 
         let started = Instant::now();
         let execution = MetalExecution::new(context);
-        let (q, k, v) = self.project_qkv_encode(context, execution.command_buffer(), x)?;
+        let (q, k, v) = self.project_qkv_rope_encode(
+            context, 
+            execution.command_buffer(), 
+            x,
+            seq_len,
+            start_pos,
+        )?;
         
         execution.finish();
         profile.qkv_projection += started.elapsed();
 
         let started = Instant::now();
-        let q = self.prepare_heads(&q, seq_len, self.num_heads)?;
-        let k = self.prepare_heads(&k, seq_len, self.num_kv_heads)?;
-        let v = self.prepare_heads(&v, seq_len, self.num_kv_heads)?;
-        let q = self.rope.forward(context, &q, start_pos)?;
-        let k = self.rope.forward(context, &k, start_pos)?;
         cache.append(context, k, v)?;
         let all_k = cache.key()?;
         let all_v = cache.value()?;
@@ -741,6 +740,195 @@ fn batched_qkv_projection_matches_sync_path() {
         &expected_v,
         &actual_v,
         0.01,
+    );
+}
+#[test]
+fn batched_qkv_rope_matches_sync_path() {
+    let Some(context) =
+        metal_context()
+    else {
+        return;
+    };
+
+    let attention =
+        attention(&context)
+            .to_dtype(
+                &context,
+                DType::F16,
+            )
+            .unwrap();
+
+    let input =
+        Tensor::from_f32_slice(
+            &context,
+            &[
+                0.1,
+                0.2,
+                0.3,
+                0.4,
+                -0.2,
+                0.5,
+                0.7,
+                -0.1,
+            ],
+            &[2, 4],
+        )
+        .unwrap()
+        .to_dtype(
+            &context,
+            DType::F16,
+        )
+        .unwrap();
+
+    let seq_len = 2;
+    let start_pos = 0;
+
+    /*
+     * ---------------------------
+     * 기존 sync reference
+     * ---------------------------
+     */
+
+    let expected_q =
+        attention
+            .q_proj
+            .forward(
+                &context,
+                &input,
+            )
+            .unwrap();
+
+    let expected_k =
+        attention
+            .k_proj
+            .forward(
+                &context,
+                &input,
+            )
+            .unwrap();
+
+    let expected_v =
+        attention
+            .v_proj
+            .forward(
+                &context,
+                &input,
+            )
+            .unwrap();
+
+    let expected_q =
+        attention
+            .prepare_heads(
+                &expected_q,
+                seq_len,
+                attention.num_heads,
+            )
+            .unwrap();
+
+    let expected_k =
+        attention
+            .prepare_heads(
+                &expected_k,
+                seq_len,
+                attention.num_kv_heads,
+            )
+            .unwrap();
+
+    let expected_v =
+        attention
+            .prepare_heads(
+                &expected_v,
+                seq_len,
+                attention.num_kv_heads,
+            )
+            .unwrap();
+
+    let expected_q =
+        attention
+            .rope
+            .forward(
+                &context,
+                &expected_q,
+                start_pos,
+            )
+            .unwrap();
+
+    let expected_k =
+        attention
+            .rope
+            .forward(
+                &context,
+                &expected_k,
+                start_pos,
+            )
+            .unwrap();
+
+    /*
+     * V에는 RoPE가 없으므로,
+     * 비교할 때만 contiguous로 만들어준다.
+     */
+    let expected_v =
+        expected_v
+            .contiguous(
+                &context,
+            )
+            .unwrap();
+
+    /*
+     * ---------------------------
+     * batched path
+     * ---------------------------
+     */
+
+    let execution =
+        MetalExecution::new(
+            &context,
+        );
+
+    let (
+        actual_q,
+        actual_k,
+        actual_v,
+    ) =
+        attention
+            .project_qkv_rope_encode(
+                &context,
+                execution.command_buffer(),
+                &input,
+                seq_len,
+                start_pos,
+            )
+            .unwrap();
+
+    execution.finish();
+
+    /*
+     * V는 아직 view라서
+     * GPU execution 완료 후 비교용으로만 materialize.
+     */
+    let actual_v =
+        actual_v
+            .contiguous(
+                &context,
+            )
+            .unwrap();
+
+    assert_close(
+        &expected_q,
+        &actual_q,
+        0.02,
+    );
+
+    assert_close(
+        &expected_k,
+        &actual_k,
+        0.02,
+    );
+
+    assert_close(
+        &expected_v,
+        &actual_v,
+        0.02,
     );
 }
 }

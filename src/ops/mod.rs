@@ -24,6 +24,7 @@ pub use batched_matmul::{batched_matmul_f16, batched_matmul_f32};
 pub use cast::cast;
 pub use concat_sequence::concat_sequence_f32;
 pub use contiguous::{materialize_contiguous_f16, materialize_contiguous_f32};
+pub(crate) use contiguous::materialize_contiguous_f16_encode;
 pub use embedding::{embedding_f16, embedding_f32};
 pub(crate) use kv_cache_write::kv_cache_write_encode;
 pub use kv_cache_write::{kv_cache_write_f16, kv_cache_write_f32};
