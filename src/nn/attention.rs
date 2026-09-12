@@ -1,10 +1,11 @@
 use crate::error::{Result, TinyError};
 
-use crate::metal::MetalContext;
+use crate::metal::{MetalContext, MetalExecution};
 use crate::model::LayerKvCache;
 use crate::profile::DecodeProfile;
 use crate::tensor::{DType, Tensor};
 use std::time::Instant;
+use ::metal::CommandBufferRef;
 
 use super::{Linear, RotaryEmbedding};
 
@@ -169,6 +170,21 @@ impl SelfAttention {
         self.forward_with_cache(context, input, &mut cache)
     }
 
+    fn project_qkv_encode(
+        &self,
+        context: &MetalContext,
+        command_buffer: &CommandBufferRef,
+        input: &Tensor,
+    ) -> Result<(Tensor, Tensor, Tensor)> {
+        let q = self.q_proj.forward_encode(context, command_buffer, input)?;
+
+        let k = self.k_proj.forward_encode(context, command_buffer, input)?;
+
+        let v = self.v_proj.forward_encode(context, command_buffer, input)?;
+
+        Ok((q, k, v))
+    }
+
     pub fn forward_with_cache(
         &self,
         context: &MetalContext,
@@ -204,10 +220,14 @@ impl SelfAttention {
 
         let start_pos = cache.len();
 
-        let q = self.q_proj.forward(context, x)?;
-        let k = self.k_proj.forward(context, x)?;
-        let v = self.v_proj.forward(context, x)?;
-
+        let execution = MetalExecution::new(context);
+        let (q, k, v) =
+        self.project_qkv_encode(
+            context,
+            execution.command_buffer(),
+            x,
+        )?;
+        execution.finish();
         // --------------------------------------------
         // [S, hidden]
         //
