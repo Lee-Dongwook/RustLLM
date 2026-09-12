@@ -53,14 +53,26 @@ impl ToolRegistry {
     }
 
     pub fn execute(&self, call: &ToolCall) -> Result<ToolResult> {
+        self.validate_call(call)?;
+
         let tool = self
             .get(call.name())
             .ok_or_else(|| TinyError::Tool(format!("unknown tool `{}`", call.name(),)))?;
 
-        /*
-         * Tool 실행 전에 arguments가
-         * Tool이 선언한 schema를 만족하는지 확인.
-         */
+        let output = tool.execute(call.arguments())?;
+
+        Ok(ToolResult::new(call.name(), output))
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &dyn Tool> + '_ {
+        self.tools.values().map(|tool| tool.as_ref())
+    }
+
+    pub fn validate_call(&self, call: &ToolCall) -> Result<()> {
+        let tool = self
+            .get(call.name())
+            .ok_or_else(|| TinyError::Tool(format!("unknown tool `{}`", call.name(),)))?;
+
         tool.input_schema()
             .validate(call.arguments())
             .map_err(|error| {
@@ -70,9 +82,7 @@ impl ToolRegistry {
                 ))
             })?;
 
-        let output = tool.execute(call.arguments())?;
-
-        Ok(ToolResult::new(call.name(), output))
+        Ok(())
     }
 }
 
@@ -204,5 +214,31 @@ mod tests {
         let result = registry.register(AddTool::new());
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn validates_tool_call_without_executing() {
+        let mut registry = ToolRegistry::new();
+
+        registry.register(AddTool::new()).unwrap();
+
+        let call = ToolCall::new(
+            "add",
+            json!({
+                "left": 10,
+                "right": 20
+            }),
+        );
+
+        registry.validate_call(&call).unwrap();
+    }
+
+    #[test]
+    fn validation_rejects_unknown_tool() {
+        let registry = ToolRegistry::new();
+
+        let call = ToolCall::new("something_fake", json!({}));
+
+        assert!(registry.validate_call(&call,).is_err());
     }
 }
