@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Start an interactive session with the project's default instruction model.
+# Optional overrides:
+#   LLM_MODEL=models/SmolLM2-360M-Instruct ./llm
+#   LLM_MAX_TOKENS=256 ./llm
+
+set -euo pipefail
+
+project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+model_dir="${LLM_MODEL:-$project_dir/models/SmolLM2-135M-Instruct}"
+dtype="${LLM_DTYPE:-f16}"
+max_tokens="${LLM_MAX_TOKENS:-128}"
+
+if [[ ! -f "$model_dir/model.bin" || ! -f "$model_dir/config.json" ]]; then
+  echo "모델을 찾을 수 없습니다: $model_dir" >&2
+  echo "LLM_MODEL 환경 변수로 변환된 모델 폴더를 지정하세요." >&2
+  echo "예: LLM_MODEL=models/SmolLM2-360M-Instruct ./llm" >&2
+  exit 1
+fi
+
+exec cargo run --release --manifest-path "$project_dir/Cargo.toml" -- \
+  chat \
+  --model "$model_dir" \
+  --dtype "$dtype" \
+  --max-tokens "$max_tokens" \
+  "$@"

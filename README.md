@@ -82,6 +82,23 @@ SentencePiece decode
 
 `chat`은 SmolLM2의 ChatML 형식(`system`/`user`/`assistant`)으로 프롬프트를 구성해 터미널에서 여러 차례 대화할 수 있게 합니다. 현재 이 템플릿에 맞는 SmolLM2 계열 모델을 사용해야 합니다.
 
+가장 빠른 실행 방법은 저장소 루트에서 아래 한 줄을 입력하는 것입니다. 기본값으로
+`models/SmolLM2-135M-Instruct` 모델을 F16으로 실행합니다.
+
+```bash
+./llm
+```
+
+처음 한 번은 release 빌드 때문에 시간이 걸릴 수 있고, 이후에는 바로 실행됩니다.
+다른 변환 모델을 쓰려면 실행 시에만 `LLM_MODEL`을 지정합니다.
+
+```bash
+LLM_MODEL=models/SmolLM2-360M-Instruct ./llm
+```
+
+응답 최대 길이는 `LLM_MAX_TOKENS`로 조절할 수 있습니다. 대화 중에는 `/exit`로
+종료하고 `/clear`로 대화 이력을 비웁니다.
+
 ```bash
 cargo run -- chat \
   --model models/SmolLM2-135M \
