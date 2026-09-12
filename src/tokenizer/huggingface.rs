@@ -200,19 +200,11 @@ mod tests {
 
     #[test]
     fn encodes_im_start_as_single_special_token() {
-        let model_dir =
-            create_test_model_dir();
+        let model_dir = create_test_model_dir();
 
-        let tokenizer =
-            HuggingFaceTokenizer::from_model_dir(
-                &model_dir,
-            )
-            .unwrap();
+        let tokenizer = HuggingFaceTokenizer::from_model_dir(&model_dir).unwrap();
 
-        let ids =
-            tokenizer
-                .encode("<|im_start|>")
-                .unwrap();
+        let ids = tokenizer.encode("<|im_start|>").unwrap();
 
         assert_eq!(
             ids,
@@ -225,87 +217,47 @@ mod tests {
 
     #[test]
     fn encodes_im_end_as_single_special_token() {
-        let model_dir =
-            create_test_model_dir();
+        let model_dir = create_test_model_dir();
 
-        let tokenizer =
-            HuggingFaceTokenizer::from_model_dir(
-                &model_dir,
-            )
-            .unwrap();
+        let tokenizer = HuggingFaceTokenizer::from_model_dir(&model_dir).unwrap();
 
-        let ids =
-            tokenizer
-                .encode("<|im_end|>")
-                .unwrap();
+        let ids = tokenizer.encode("<|im_end|>").unwrap();
 
-        assert_eq!(
-            ids,
-            vec![6],
-            "<|im_end|> must encode to exactly one token",
-        );
+        assert_eq!(ids, vec![6], "<|im_end|> must encode to exactly one token",);
 
         fs::remove_dir_all(model_dir).unwrap();
     }
 
     #[test]
     fn resolves_im_end_as_eos_token() {
-        let model_dir =
-            create_test_model_dir();
+        let model_dir = create_test_model_dir();
 
-        let tokenizer =
-            HuggingFaceTokenizer::from_model_dir(
-                &model_dir,
-            )
-            .unwrap();
+        let tokenizer = HuggingFaceTokenizer::from_model_dir(&model_dir).unwrap();
 
-        assert_eq!(
-            tokenizer.eos_token_id(),
-            Some(6),
-        );
+        assert_eq!(tokenizer.eos_token_id(), Some(6),);
 
-        assert_eq!(
-            tokenizer.bos_token_id(),
-            None,
-        );
+        assert_eq!(tokenizer.bos_token_id(), None,);
 
         fs::remove_dir_all(model_dir).unwrap();
     }
 
     #[test]
     fn preserves_special_tokens_inside_normal_text() {
-        let model_dir =
-            create_test_model_dir();
+        let model_dir = create_test_model_dir();
 
-        let tokenizer =
-            HuggingFaceTokenizer::from_model_dir(
-                &model_dir,
-            )
-            .unwrap();
+        let tokenizer = HuggingFaceTokenizer::from_model_dir(&model_dir).unwrap();
 
         let ids = tokenizer
-            .encode(
-                "<|im_start|>user\nHello<|im_end|>\n<|im_start|>assistant\n",
-            )
+            .encode("<|im_start|>user\nHello<|im_end|>\n<|im_start|>assistant\n")
             .unwrap();
 
         /*
          * 문자열 한가운데 있어도 special token으로
          * 분리되어 있어야 한다.
          */
-        assert_eq!(
-            ids.iter()
-                .filter(|&&id| id == 5)
-                .count(),
-            2,
-        );
+        assert_eq!(ids.iter().filter(|&&id| id == 5).count(), 2,);
 
-        assert_eq!(
-            ids.iter()
-                .filter(|&&id| id == 6)
-                .count(),
-            1,
-        );
+        assert_eq!(ids.iter().filter(|&&id| id == 6).count(), 1,);
 
         fs::remove_dir_all(model_dir).unwrap();
     }

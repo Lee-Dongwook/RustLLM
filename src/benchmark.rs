@@ -79,7 +79,11 @@ impl BenchmarkStats {
             self.generated_tokens,
             self.decode_time.as_secs_f64() * 1_000.0,
             self.decode_tokens_per_second(),
-            if self.generated_tokens == 0 { 0.0 } else { self.decode_time.as_secs_f64() * 1_000.0 / self.generated_tokens as f64 },
+            if self.generated_tokens == 0 {
+                0.0
+            } else {
+                self.decode_time.as_secs_f64() * 1_000.0 / self.generated_tokens as f64
+            },
             self.total_generation_time.as_secs_f64() * 1_000.0,
         );
     }

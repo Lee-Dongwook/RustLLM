@@ -1,7 +1,7 @@
 use std::ffi::c_void;
 use std::mem;
 
-use ::metal::{CommandBufferRef,MTLSize};
+use ::metal::{CommandBufferRef, MTLSize};
 
 use crate::error::{Result, TinyError};
 
@@ -10,10 +10,25 @@ use crate::tensor::{DType, Tensor};
 
 const THREADGROUP_SIZE: u64 = 256;
 
-pub fn rmsnorm_f32(context: &MetalContext, input: &MetalBuffer, weight: &MetalBuffer, rows: usize, hidden_size: usize, epsilon: f32) -> Result<MetalBuffer> {
+pub fn rmsnorm_f32(
+    context: &MetalContext,
+    input: &MetalBuffer,
+    weight: &MetalBuffer,
+    rows: usize,
+    hidden_size: usize,
+    epsilon: f32,
+) -> Result<MetalBuffer> {
     let execution = MetalExecution::new(context);
 
-    let output = rmsnorm_f32_encode(context, execution.command_buffer(), input, weight, rows, hidden_size, epsilon)?;
+    let output = rmsnorm_f32_encode(
+        context,
+        execution.command_buffer(),
+        input,
+        weight,
+        rows,
+        hidden_size,
+        epsilon,
+    )?;
 
     execution.finish();
 
@@ -100,9 +115,24 @@ pub(crate) fn rmsnorm_f32_encode(
     Ok(output)
 }
 
-pub fn rmsnorm_f16(context: &MetalContext, input: &MetalBuffer, weight: &MetalBuffer, rows: usize, hidden_size: usize, epsilon: f32) -> Result<MetalBuffer> {
+pub fn rmsnorm_f16(
+    context: &MetalContext,
+    input: &MetalBuffer,
+    weight: &MetalBuffer,
+    rows: usize,
+    hidden_size: usize,
+    epsilon: f32,
+) -> Result<MetalBuffer> {
     let execution = MetalExecution::new(context);
-    let output = rmsnorm_f16_encode(context, execution.command_buffer(), input, weight, rows, hidden_size, epsilon)?;
+    let output = rmsnorm_f16_encode(
+        context,
+        execution.command_buffer(),
+        input,
+        weight,
+        rows,
+        hidden_size,
+        epsilon,
+    )?;
 
     execution.finish();
 
@@ -243,22 +273,12 @@ pub fn rmsnorm(
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        rmsnorm_f16,
-        rmsnorm_f16_encode,
-        rmsnorm_f32,
-    };
+    use super::{rmsnorm_f16, rmsnorm_f16_encode, rmsnorm_f32};
 
     use crate::{
-        metal::{
-            MetalContext,
-            MetalExecution,
-        },
+        metal::{MetalContext, MetalExecution},
         ops::add_f16_encode,
-        tensor::{
-            DType,
-            Tensor,
-        },
+        tensor::{DType, Tensor},
     };
 
     const EPSILON: f32 = 1e-5;
@@ -270,77 +290,39 @@ mod tests {
         hidden_size: usize,
         epsilon: f32,
     ) -> Vec<f32> {
-        assert_eq!(
-            input.len(),
-            rows * hidden_size,
-        );
+        assert_eq!(input.len(), rows * hidden_size,);
 
-        assert_eq!(
-            weight.len(),
-            hidden_size,
-        );
+        assert_eq!(weight.len(), hidden_size,);
 
-        let mut output =
-            vec![0.0f32; input.len()];
+        let mut output = vec![0.0f32; input.len()];
 
         for row in 0..rows {
-            let row_start =
-                row * hidden_size;
+            let row_start = row * hidden_size;
 
-            let row_end =
-                row_start + hidden_size;
+            let row_end = row_start + hidden_size;
 
-            let row_input =
-                &input[row_start..row_end];
+            let row_input = &input[row_start..row_end];
 
             let mean_square =
-                row_input
-                    .iter()
-                    .map(|value| {
-                        value * value
-                    })
-                    .sum::<f32>()
-                    / hidden_size as f32;
+                row_input.iter().map(|value| value * value).sum::<f32>() / hidden_size as f32;
 
-            let inv_rms =
-                1.0
-                    / (mean_square + epsilon)
-                        .sqrt();
+            let inv_rms = 1.0 / (mean_square + epsilon).sqrt();
 
             for column in 0..hidden_size {
-                let index =
-                    row_start + column;
+                let index = row_start + column;
 
-                output[index] =
-                    input[index]
-                        * inv_rms
-                        * weight[column];
+                output[index] = input[index] * inv_rms * weight[column];
             }
         }
 
         output
     }
 
-    fn assert_close(
-        actual: &[f32],
-        expected: &[f32],
-        tolerance: f32,
-    ) {
-        assert_eq!(
-            actual.len(),
-            expected.len(),
-        );
+    fn assert_close(actual: &[f32], expected: &[f32], tolerance: f32) {
+        assert_eq!(actual.len(), expected.len(),);
 
-        for (
-            index,
-            (actual, expected),
-        ) in actual
-            .iter()
-            .zip(expected.iter())
-            .enumerate()
-        {
-            let error =
-                (actual - expected).abs();
+        for (index, (actual, expected)) in actual.iter().zip(expected.iter()).enumerate() {
+            let error = (actual - expected).abs();
 
             assert!(
                 error <= tolerance,
@@ -358,9 +340,7 @@ mod tests {
 
     #[test]
     fn rmsnorm_f32_matches_cpu_reference() {
-        let Some(context) =
-            metal_context()
-        else {
+        let Some(context) = metal_context() else {
             return;
         };
 
@@ -370,291 +350,134 @@ mod tests {
          * row 0 = [1, 2, 3, 4]
          * row 1 = [-1, 0.5, -0.5, 2]
          */
-        let input_values = [
-            1.0f32,
-            2.0,
-            3.0,
-            4.0,
-            -1.0,
-            0.5,
-            -0.5,
-            2.0,
-        ];
+        let input_values = [1.0f32, 2.0, 3.0, 4.0, -1.0, 0.5, -0.5, 2.0];
 
         /*
          * 모든 feature에 동일한 weight를 쓰지 않고
          * 서로 다른 값을 써서 weight 적용도 검증한다.
          */
-        let weight_values = [
-            1.0f32,
-            1.5,
-            0.5,
-            2.0,
-        ];
+        let weight_values = [1.0f32, 1.5, 0.5, 2.0];
 
         let rows = 2;
         let hidden_size = 4;
 
-        let input =
-            Tensor::from_f32_slice(
-                &context,
-                &input_values,
-                &[rows, hidden_size],
-            )
-            .unwrap();
+        let input = Tensor::from_f32_slice(&context, &input_values, &[rows, hidden_size]).unwrap();
 
-        let weight =
-            Tensor::from_f32_slice(
-                &context,
-                &weight_values,
-                &[hidden_size],
-            )
-            .unwrap();
+        let weight = Tensor::from_f32_slice(&context, &weight_values, &[hidden_size]).unwrap();
 
-        let expected =
-            cpu_rmsnorm(
-                &input_values,
-                &weight_values,
-                rows,
-                hidden_size,
-                EPSILON,
-            );
+        let expected = cpu_rmsnorm(&input_values, &weight_values, rows, hidden_size, EPSILON);
 
-        let output_buffer =
-            rmsnorm_f32(
-                &context,
-                input
-                    .metal_buffer()
-                    .unwrap(),
-                weight
-                    .metal_buffer()
-                    .unwrap(),
-                rows,
-                hidden_size,
-                EPSILON,
-            )
-            .unwrap();
+        let output_buffer = rmsnorm_f32(
+            &context,
+            input.metal_buffer().unwrap(),
+            weight.metal_buffer().unwrap(),
+            rows,
+            hidden_size,
+            EPSILON,
+        )
+        .unwrap();
 
         let output =
-            Tensor::from_metal_buffer(
-                output_buffer,
-                &[rows, hidden_size],
-                DType::F32,
-            )
-            .unwrap();
+            Tensor::from_metal_buffer(output_buffer, &[rows, hidden_size], DType::F32).unwrap();
 
-        let actual =
-            output
-                .to_f32_vec()
-                .unwrap();
+        let actual = output.to_f32_vec().unwrap();
 
-        assert_close(
-            &actual,
-            &expected,
-            1e-4,
-        );
+        assert_close(&actual, &expected, 1e-4);
     }
 
     #[test]
     fn rmsnorm_f16_matches_cpu_reference() {
-        let Some(context) =
-            metal_context()
-        else {
+        let Some(context) = metal_context() else {
             return;
         };
 
-        let input_values = [
-            1.0f32,
-            2.0,
-            3.0,
-            4.0,
-            -1.0,
-            0.5,
-            -0.5,
-            2.0,
-        ];
+        let input_values = [1.0f32, 2.0, 3.0, 4.0, -1.0, 0.5, -0.5, 2.0];
 
-        let weight_values = [
-            1.0f32,
-            1.5,
-            0.5,
-            2.0,
-        ];
+        let weight_values = [1.0f32, 1.5, 0.5, 2.0];
 
         let rows = 2;
         let hidden_size = 4;
 
-        let input_f16: Vec<half::f16> =
-            input_values
-                .iter()
-                .copied()
-                .map(half::f16::from_f32)
-                .collect();
+        let input_f16: Vec<half::f16> = input_values
+            .iter()
+            .copied()
+            .map(half::f16::from_f32)
+            .collect();
 
-        let weight_f16: Vec<half::f16> =
-            weight_values
-                .iter()
-                .copied()
-                .map(half::f16::from_f32)
-                .collect();
+        let weight_f16: Vec<half::f16> = weight_values
+            .iter()
+            .copied()
+            .map(half::f16::from_f32)
+            .collect();
 
-        let input =
-            Tensor::from_f16_slice(
-                &context,
-                &input_f16,
-                &[rows, hidden_size],
-            )
-            .unwrap();
+        let input = Tensor::from_f16_slice(&context, &input_f16, &[rows, hidden_size]).unwrap();
 
-        let weight =
-            Tensor::from_f16_slice(
-                &context,
-                &weight_f16,
-                &[hidden_size],
-            )
-            .unwrap();
+        let weight = Tensor::from_f16_slice(&context, &weight_f16, &[hidden_size]).unwrap();
 
-        let expected =
-            cpu_rmsnorm(
-                &input_values,
-                &weight_values,
-                rows,
-                hidden_size,
-                EPSILON,
-            );
+        let expected = cpu_rmsnorm(&input_values, &weight_values, rows, hidden_size, EPSILON);
 
-        let output_buffer =
-            rmsnorm_f16(
-                &context,
-                input
-                    .metal_buffer()
-                    .unwrap(),
-                weight
-                    .metal_buffer()
-                    .unwrap(),
-                rows,
-                hidden_size,
-                EPSILON,
-            )
-            .unwrap();
+        let output_buffer = rmsnorm_f16(
+            &context,
+            input.metal_buffer().unwrap(),
+            weight.metal_buffer().unwrap(),
+            rows,
+            hidden_size,
+            EPSILON,
+        )
+        .unwrap();
 
         let output =
-            Tensor::from_metal_buffer(
-                output_buffer,
-                &[rows, hidden_size],
-                DType::F16,
-            )
-            .unwrap();
+            Tensor::from_metal_buffer(output_buffer, &[rows, hidden_size], DType::F16).unwrap();
 
-        assert_eq!(
-            output.dtype(),
-            DType::F16,
-        );
+        assert_eq!(output.dtype(), DType::F16,);
 
-        let actual =
-            output
-                .to_f32_vec()
-                .unwrap();
+        let actual = output.to_f32_vec().unwrap();
 
         /*
          * F16 저장 때문에 F32보다 tolerance를 넓게 잡는다.
          */
-        assert_close(
-            &actual,
-            &expected,
-            0.02,
-        );
+        assert_close(&actual, &expected, 0.02);
     }
 
     #[test]
     fn batches_rmsnorm_then_add_in_one_command_buffer() {
-        let Some(context) =
-            metal_context()
-        else {
+        let Some(context) = metal_context() else {
             return;
         };
 
-        let input_values = [
-            1.0f32,
-            2.0,
-            3.0,
-            4.0,
-            -1.0,
-            0.5,
-            -0.5,
-            2.0,
-        ];
+        let input_values = [1.0f32, 2.0, 3.0, 4.0, -1.0, 0.5, -0.5, 2.0];
 
-        let weight_values = [
-            1.0f32,
-            1.5,
-            0.5,
-            2.0,
-        ];
+        let weight_values = [1.0f32, 1.5, 0.5, 2.0];
 
         let rows = 2;
         let hidden_size = 4;
 
-        let input_f16: Vec<half::f16> =
-            input_values
-                .iter()
-                .copied()
-                .map(half::f16::from_f32)
-                .collect();
+        let input_f16: Vec<half::f16> = input_values
+            .iter()
+            .copied()
+            .map(half::f16::from_f32)
+            .collect();
 
-        let weight_f16: Vec<half::f16> =
-            weight_values
-                .iter()
-                .copied()
-                .map(half::f16::from_f32)
-                .collect();
+        let weight_f16: Vec<half::f16> = weight_values
+            .iter()
+            .copied()
+            .map(half::f16::from_f32)
+            .collect();
 
-        let zeros =
-            vec![
-                half::f16::from_f32(0.0);
-                rows * hidden_size
-            ];
+        let zeros = vec![half::f16::from_f32(0.0); rows * hidden_size];
 
-        let input =
-            Tensor::from_f16_slice(
-                &context,
-                &input_f16,
-                &[rows, hidden_size],
-            )
-            .unwrap();
+        let input = Tensor::from_f16_slice(&context, &input_f16, &[rows, hidden_size]).unwrap();
 
-        let weight =
-            Tensor::from_f16_slice(
-                &context,
-                &weight_f16,
-                &[hidden_size],
-            )
-            .unwrap();
+        let weight = Tensor::from_f16_slice(&context, &weight_f16, &[hidden_size]).unwrap();
 
-        let zero_tensor =
-            Tensor::from_f16_slice(
-                &context,
-                &zeros,
-                &[rows, hidden_size],
-            )
-            .unwrap();
+        let zero_tensor = Tensor::from_f16_slice(&context, &zeros, &[rows, hidden_size]).unwrap();
 
-        let expected =
-            cpu_rmsnorm(
-                &input_values,
-                &weight_values,
-                rows,
-                hidden_size,
-                EPSILON,
-            );
+        let expected = cpu_rmsnorm(&input_values, &weight_values, rows, hidden_size, EPSILON);
 
         /*
          * 여기서 command buffer를 딱 하나 만든다.
          */
-        let execution =
-            MetalExecution::new(
-                &context,
-            );
+        let execution = MetalExecution::new(&context);
 
         /*
          * Kernel #1
@@ -664,21 +487,16 @@ mod tests {
          * 아직 commit도,
          * wait도 하지 않는다.
          */
-        let normalized =
-            rmsnorm_f16_encode(
-                &context,
-                execution.command_buffer(),
-                input
-                    .metal_buffer()
-                    .unwrap(),
-                weight
-                    .metal_buffer()
-                    .unwrap(),
-                rows,
-                hidden_size,
-                EPSILON,
-            )
-            .unwrap();
+        let normalized = rmsnorm_f16_encode(
+            &context,
+            execution.command_buffer(),
+            input.metal_buffer().unwrap(),
+            weight.metal_buffer().unwrap(),
+            rows,
+            hidden_size,
+            EPSILON,
+        )
+        .unwrap();
 
         /*
          * Kernel #2
@@ -690,16 +508,13 @@ mod tests {
          *
          * + 0 이므로 최종 결과는 RMSNorm과 동일해야 한다.
          */
-        let added =
-            add_f16_encode(
-                &context,
-                execution.command_buffer(),
-                &normalized,
-                zero_tensor
-                    .metal_buffer()
-                    .unwrap(),
-            )
-            .unwrap();
+        let added = add_f16_encode(
+            &context,
+            execution.command_buffer(),
+            &normalized,
+            zero_tensor.metal_buffer().unwrap(),
+        )
+        .unwrap();
 
         /*
          * 여기에서 처음이자 마지막으로
@@ -707,23 +522,10 @@ mod tests {
          */
         execution.finish();
 
-        let output =
-            Tensor::from_metal_buffer(
-                added,
-                &[rows, hidden_size],
-                DType::F16,
-            )
-            .unwrap();
+        let output = Tensor::from_metal_buffer(added, &[rows, hidden_size], DType::F16).unwrap();
 
-        let actual =
-            output
-                .to_f32_vec()
-                .unwrap();
+        let actual = output.to_f32_vec().unwrap();
 
-        assert_close(
-            &actual,
-            &expected,
-            0.02,
-        );
+        assert_close(&actual, &expected, 0.02);
     }
 }

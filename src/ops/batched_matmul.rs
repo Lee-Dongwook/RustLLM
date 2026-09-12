@@ -197,8 +197,9 @@ fn encode(
     encoder.set_buffer(2, Some(output.raw()), 0);
 
     let dimensions = [batch_count, m, k, n].map(|value| {
-        u32::try_from(value)
-            .map_err(|_| TinyError::InvalidShape("batched matmul dimension exceeds u32".to_string()))
+        u32::try_from(value).map_err(|_| {
+            TinyError::InvalidShape("batched matmul dimension exceeds u32".to_string())
+        })
     });
 
     for (index, value) in dimensions.into_iter().enumerate() {

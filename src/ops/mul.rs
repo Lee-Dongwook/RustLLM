@@ -1,23 +1,28 @@
 use std::ffi::c_void;
 use std::mem;
 
-use ::metal::{MTLSize, CommandBufferRef};
+use ::metal::{CommandBufferRef, MTLSize};
 
 use crate::error::{Result, TinyError};
 
 use crate::metal::{MetalBuffer, MetalContext, MetalExecution};
 
-pub fn mul_f32(context: &MetalContext, a: &MetalBuffer, b: &MetalBuffer,) -> Result<MetalBuffer> {
+pub fn mul_f32(context: &MetalContext, a: &MetalBuffer, b: &MetalBuffer) -> Result<MetalBuffer> {
     let execution = MetalExecution::new(context);
 
-    let output = mul_f32_encode(context, execution.command_buffer(), a, b,)?;
+    let output = mul_f32_encode(context, execution.command_buffer(), a, b)?;
 
     execution.finish();
 
     Ok(output)
 }
 
-pub(crate) fn mul_f32_encode(context: &MetalContext, command_buffer: &CommandBufferRef, a: &MetalBuffer, b: &MetalBuffer) -> Result<MetalBuffer> {
+pub(crate) fn mul_f32_encode(
+    context: &MetalContext,
+    command_buffer: &CommandBufferRef,
+    a: &MetalBuffer,
+    b: &MetalBuffer,
+) -> Result<MetalBuffer> {
     if a.len() != b.len() {
         return Err(TinyError::InvalidShape(format!(
             "element-wise multiply requires equal buffer lengths, got {} and {}",
@@ -65,14 +70,19 @@ pub(crate) fn mul_f32_encode(context: &MetalContext, command_buffer: &CommandBuf
 pub fn mul_f16(context: &MetalContext, a: &MetalBuffer, b: &MetalBuffer) -> Result<MetalBuffer> {
     let execution = MetalExecution::new(context);
 
-    let output = mul_f16_encode(context, execution.command_buffer(), a, b,)?;
+    let output = mul_f16_encode(context, execution.command_buffer(), a, b)?;
 
     execution.finish();
 
     Ok(output)
 }
 
-pub(crate) fn mul_f16_encode(context: &MetalContext, command_buffer: &CommandBufferRef, a: &MetalBuffer, b: &MetalBuffer) -> Result<MetalBuffer> {
+pub(crate) fn mul_f16_encode(
+    context: &MetalContext,
+    command_buffer: &CommandBufferRef,
+    a: &MetalBuffer,
+    b: &MetalBuffer,
+) -> Result<MetalBuffer> {
     if a.len() != b.len() {
         return Err(TinyError::InvalidShape(format!(
             "element-wise multiply requires equal buffer lengths, got {} and {}",
@@ -113,88 +123,63 @@ mod tests {
     use super::mul_f16_encode;
 
     use crate::{
-        metal::{
-            MetalContext,
-            MetalExecution,
-        },
+        metal::{MetalContext, MetalExecution},
         ops::add_f16_encode,
-        tensor::{
-            DType,
-            Tensor,
-        },
+        tensor::{DType, Tensor},
     };
 
     #[test]
     fn batches_add_then_mul_in_one_command_buffer() {
-        let Ok(context) =
-            MetalContext::new()
-        else {
+        let Ok(context) = MetalContext::new() else {
             return;
         };
 
-        let a =
-            Tensor::from_f16_slice(
-                &context,
-                &[
-                    half::f16::from_f32(1.0),
-                    half::f16::from_f32(2.0),
-                ],
-                &[2],
-            )
-            .unwrap();
+        let a = Tensor::from_f16_slice(
+            &context,
+            &[half::f16::from_f32(1.0), half::f16::from_f32(2.0)],
+            &[2],
+        )
+        .unwrap();
 
-        let b =
-            Tensor::from_f16_slice(
-                &context,
-                &[
-                    half::f16::from_f32(10.0),
-                    half::f16::from_f32(20.0),
-                ],
-                &[2],
-            )
-            .unwrap();
+        let b = Tensor::from_f16_slice(
+            &context,
+            &[half::f16::from_f32(10.0), half::f16::from_f32(20.0)],
+            &[2],
+        )
+        .unwrap();
 
-        let c =
-            Tensor::from_f16_slice(
-                &context,
-                &[
-                    half::f16::from_f32(2.0),
-                    half::f16::from_f32(3.0),
-                ],
-                &[2],
-            )
-            .unwrap();
+        let c = Tensor::from_f16_slice(
+            &context,
+            &[half::f16::from_f32(2.0), half::f16::from_f32(3.0)],
+            &[2],
+        )
+        .unwrap();
 
-        let execution =
-            MetalExecution::new(
-                &context,
-            );
+        let execution = MetalExecution::new(&context);
 
         /*
          * 1 + 10 = 11
          * 2 + 20 = 22
          */
-        let added =
-            add_f16_encode(
-                &context,
-                execution.command_buffer(),
-                a.metal_buffer().unwrap(),
-                b.metal_buffer().unwrap(),
-            )
-            .unwrap();
+        let added = add_f16_encode(
+            &context,
+            execution.command_buffer(),
+            a.metal_buffer().unwrap(),
+            b.metal_buffer().unwrap(),
+        )
+        .unwrap();
 
         /*
          * 11 * 2 = 22
          * 22 * 3 = 66
          */
-        let multiplied =
-            mul_f16_encode(
-                &context,
-                execution.command_buffer(),
-                &added,
-                c.metal_buffer().unwrap(),
-            )
-            .unwrap();
+        let multiplied = mul_f16_encode(
+            &context,
+            execution.command_buffer(),
+            &added,
+            c.metal_buffer().unwrap(),
+        )
+        .unwrap();
 
         /*
          * 중요한 부분:
@@ -207,29 +192,12 @@ mod tests {
          */
         execution.finish();
 
-        let result =
-            Tensor::from_metal_buffer(
-                multiplied,
-                &[2],
-                DType::F16,
-            )
-            .unwrap();
+        let result = Tensor::from_metal_buffer(multiplied, &[2], DType::F16).unwrap();
 
-        let values =
-            result
-                .to_f32_vec()
-                .unwrap();
+        let values = result.to_f32_vec().unwrap();
 
-        assert!(
-            (values[0] - 22.0)
-                .abs()
-                < 0.01
-        );
+        assert!((values[0] - 22.0).abs() < 0.01);
 
-        assert!(
-            (values[1] - 66.0)
-                .abs()
-                < 0.01
-        );
+        assert!((values[1] - 66.0).abs() < 0.01);
     }
 }

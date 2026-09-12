@@ -1,14 +1,11 @@
 use crate::error::Result;
 
-use super::super::{
-    ChatTemplate,
-    Conversation,
-};
+use super::super::{ChatTemplate, Conversation};
 
 const IM_START: &str = "<|im_start|>";
 const IM_END: &str = "<|im_end|>";
 
-const DEFAULT_SYSTEM_PROMPT: &str = 
+const DEFAULT_SYSTEM_PROMPT: &str =
     "You are a helpful AI assistant named SmolLM, trained by Hugging Face";
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -21,31 +18,20 @@ impl SmolLm2Template {
 }
 
 impl ChatTemplate for SmolLm2Template {
-    fn render(
-        &self,
-        conversation: &Conversation,
-        add_generation_prompt: bool,
-    ) -> Result<String> {
+    fn render(&self, conversation: &Conversation, add_generation_prompt: bool) -> Result<String> {
         let messages = conversation.messages();
 
         let mut output = String::new();
 
-        if messages.first().is_some_and(|message| {
-            message.role().as_str() != "system"
-        }) {
-            push_message(
-                &mut output,
-                "system",
-                DEFAULT_SYSTEM_PROMPT,
-            );
+        if messages
+            .first()
+            .is_some_and(|message| message.role().as_str() != "system")
+        {
+            push_message(&mut output, "system", DEFAULT_SYSTEM_PROMPT);
         }
 
         for message in messages {
-            push_message(
-                &mut output,
-                message.role().as_str(),
-                message.content(),
-            );
+            push_message(&mut output, message.role().as_str(), message.content());
         }
 
         if add_generation_prompt {
@@ -57,11 +43,7 @@ impl ChatTemplate for SmolLm2Template {
     }
 }
 
-fn push_message(
-    output: &mut String,
-    role: &str,
-    content: &str,
-) {
+fn push_message(output: &mut String, role: &str, content: &str) {
     output.push_str(IM_START);
     output.push_str(role);
     output.push('\n');
@@ -77,34 +59,17 @@ mod tests {
     use super::SmolLm2Template;
 
     use crate::{
-        chat::{
-            ChatTemplate,
-            Conversation,
-        },
-        tokenizer:: {
-            ModelTokenizer,
-            Tokenizer,
-        },
+        chat::{ChatTemplate, Conversation},
+        tokenizer::{ModelTokenizer, Tokenizer},
     };
 
     #[test]
     fn renders_explicit_system_message() {
-        let mut conversation =
-            Conversation::with_system(
-                "You are concise.",
-            );
+        let mut conversation = Conversation::with_system("You are concise.");
 
-        conversation.push_user(
-            "Hello",
-        );
+        conversation.push_user("Hello");
 
-        let rendered =
-            SmolLm2Template::new()
-                .render(
-                    &conversation,
-                    true,
-                )
-                .unwrap();
+        let rendered = SmolLm2Template::new().render(&conversation, true).unwrap();
 
         assert_eq!(
             rendered,
@@ -122,20 +87,11 @@ mod tests {
 
     #[test]
     fn inserts_default_system_prompt_when_missing() {
-        let mut conversation =
-            Conversation::new();
+        let mut conversation = Conversation::new();
 
-        conversation.push_user(
-            "Hello",
-        );
+        conversation.push_user("Hello");
 
-        let rendered =
-            SmolLm2Template::new()
-                .render(
-                    &conversation,
-                    true,
-                )
-                .unwrap();
+        let rendered = SmolLm2Template::new().render(&conversation, true).unwrap();
 
         assert_eq!(
             rendered,
@@ -153,30 +109,15 @@ mod tests {
 
     #[test]
     fn renders_multi_turn_conversation() {
-        let mut conversation =
-            Conversation::with_system(
-                "Be helpful.",
-            );
+        let mut conversation = Conversation::with_system("Be helpful.");
 
-        conversation.push_user(
-            "Hello",
-        );
+        conversation.push_user("Hello");
 
-        conversation.push_assistant(
-            "Hi!",
-        );
+        conversation.push_assistant("Hi!");
 
-        conversation.push_user(
-            "What did I say?",
-        );
+        conversation.push_user("What did I say?");
 
-        let rendered =
-            SmolLm2Template::new()
-                .render(
-                    &conversation,
-                    true,
-                )
-                .unwrap();
+        let rendered = SmolLm2Template::new().render(&conversation, true).unwrap();
 
         assert_eq!(
             rendered,
@@ -200,26 +141,13 @@ mod tests {
 
     #[test]
     fn does_not_append_generation_prompt_when_disabled() {
-        let mut conversation =
-            Conversation::with_system(
-                "Be helpful.",
-            );
+        let mut conversation = Conversation::with_system("Be helpful.");
 
-        conversation.push_user(
-            "Hello",
-        );
+        conversation.push_user("Hello");
 
-        conversation.push_assistant(
-            "Hi!",
-        );
+        conversation.push_assistant("Hi!");
 
-        let rendered =
-            SmolLm2Template::new()
-                .render(
-                    &conversation,
-                    false,
-                )
-                .unwrap();
+        let rendered = SmolLm2Template::new().render(&conversation, false).unwrap();
 
         assert_eq!(
             rendered,
@@ -237,39 +165,26 @@ mod tests {
         );
     }
     fn create_test_tokenizer_dir() -> std::path::PathBuf {
-    use std::{
-        fs,
-        time::{
-            SystemTime,
-            UNIX_EPOCH,
-        },
-    };
+        use std::{
+            fs,
+            time::{SystemTime, UNIX_EPOCH},
+        };
 
-    let unique =
-        SystemTime::now()
-            .duration_since(
-                UNIX_EPOCH,
-            )
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
 
-    let model_dir =
-        std::env::temp_dir()
-            .join(format!(
-                "rustllm-chat-template-test-{unique}-{}",
-                std::process::id(),
-            ));
+        let model_dir = std::env::temp_dir().join(format!(
+            "rustllm-chat-template-test-{unique}-{}",
+            std::process::id(),
+        ));
 
-    fs::create_dir_all(
-        &model_dir,
-    )
-    .unwrap();
+        fs::create_dir_all(&model_dir).unwrap();
 
-    fs::write(
-        model_dir.join(
-            "tokenizer.json",
-        ),
-        r#"{
+        fs::write(
+            model_dir.join("tokenizer.json"),
+            r#"{
             "version": "1.0",
             "truncation": null,
             "padding": null,
@@ -320,98 +235,59 @@ mod tests {
                 "unk_token": "<unk>"
             }
         }"#,
-    )
-    .unwrap();
-
-    fs::write(
-        model_dir.join(
-            "tokenizer_config.json",
-        ),
-        r#"{
-            "bos_token": null,
-            "eos_token": "<|im_end|>"
-        }"#,
-    )
-    .unwrap();
-
-    model_dir
-    }
-    #[test]
-fn rendered_chat_preserves_special_token_boundaries() {
-    let model_dir =
-        create_test_tokenizer_dir();
-
-    let tokenizer =
-        ModelTokenizer::from_model_dir(
-            &model_dir,
         )
         .unwrap();
 
-    let mut conversation =
-        Conversation::with_system(
-            "Be helpful.",
-        );
+        fs::write(
+            model_dir.join("tokenizer_config.json"),
+            r#"{
+            "bos_token": null,
+            "eos_token": "<|im_end|>"
+        }"#,
+        )
+        .unwrap();
 
-    conversation.push_user(
-        "Hello",
-    );
+        model_dir
+    }
+    #[test]
+    fn rendered_chat_preserves_special_token_boundaries() {
+        let model_dir = create_test_tokenizer_dir();
 
-    let prompt =
-        SmolLm2Template::new()
-            .render(
-                &conversation,
-                true,
-            )
-            .unwrap();
+        let tokenizer = ModelTokenizer::from_model_dir(&model_dir).unwrap();
 
-    let ids =
-        tokenizer
-            .encode(
-                &prompt,
-            )
-            .unwrap();
+        let mut conversation = Conversation::with_system("Be helpful.");
 
-    /*
-     * Expected template:
-     *
-     * <|im_start|>system
-     * ...
-     * <|im_end|>
-     *
-     * <|im_start|>user
-     * ...
-     * <|im_end|>
-     *
-     * <|im_start|>assistant
-     *
-     *
-     * 따라서:
-     *
-     * im_start = 3
-     * im_end   = 2
-     */
-    assert_eq!(
-        ids.iter()
-            .filter(|&&id| id == 5)
-            .count(),
-        3,
-    );
+        conversation.push_user("Hello");
 
-    assert_eq!(
-        ids.iter()
-            .filter(|&&id| id == 6)
-            .count(),
-        2,
-    );
+        let prompt = SmolLm2Template::new().render(&conversation, true).unwrap();
 
-    assert_eq!(
-        tokenizer.eos_token_id(),
-        Some(6),
-    );
+        let ids = tokenizer.encode(&prompt).unwrap();
 
-    std::fs::remove_dir_all(
-        model_dir,
-    )
-    .unwrap();
+        /*
+         * Expected template:
+         *
+         * <|im_start|>system
+         * ...
+         * <|im_end|>
+         *
+         * <|im_start|>user
+         * ...
+         * <|im_end|>
+         *
+         * <|im_start|>assistant
+         *
+         *
+         * 따라서:
+         *
+         * im_start = 3
+         * im_end   = 2
+         */
+        assert_eq!(ids.iter().filter(|&&id| id == 5).count(), 3,);
+
+        assert_eq!(ids.iter().filter(|&&id| id == 6).count(), 2,);
+
+        assert_eq!(tokenizer.eos_token_id(), Some(6),);
+
+        std::fs::remove_dir_all(model_dir).unwrap();
     }
 }

@@ -65,13 +65,16 @@ impl Transformer {
                     max_seq_len: self.config.max_seq_len,
                 });
             }
-            hidden = block.forward_with_cache_encode(context, command_buffer, &hidden, layer_cache)?;
+            hidden =
+                block.forward_with_cache_encode(context, command_buffer, &hidden, layer_cache)?;
         }
 
         let hidden = self
             .final_norm
             .forward_encode(context, command_buffer, &hidden)?;
-        let logits = self.lm_head.forward_encode(context, command_buffer, &hidden)?;
+        let logits = self
+            .lm_head
+            .forward_encode(context, command_buffer, &hidden)?;
 
         execution.finish();
 

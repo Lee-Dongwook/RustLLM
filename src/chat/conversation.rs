@@ -36,7 +36,7 @@ impl Conversation {
         self.push(Message::assistant(content));
     }
 
-     pub fn messages(&self) -> &[Message] {
+    pub fn messages(&self) -> &[Message] {
         &self.messages
     }
 
@@ -57,7 +57,6 @@ impl Conversation {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::Conversation;
@@ -74,18 +73,14 @@ mod tests {
 
     #[test]
     fn creates_conversation_with_system_message() {
-        let conversation =
-            Conversation::with_system("You are a helpful assistant.");
+        let conversation = Conversation::with_system("You are a helpful assistant.");
 
         assert_eq!(conversation.len(), 1);
 
         let message = conversation.last().unwrap();
 
         assert_eq!(message.role(), Role::System);
-        assert_eq!(
-            message.content(),
-            "You are a helpful assistant."
-        );
+        assert_eq!(message.content(), "You are a helpful assistant.");
     }
 
     #[test]
@@ -99,70 +94,42 @@ mod tests {
 
         assert_eq!(conversation.len(), 4);
 
-        assert_eq!(
-            conversation.messages()[0].role(),
-            Role::System
-        );
+        assert_eq!(conversation.messages()[0].role(), Role::System);
 
-        assert_eq!(
-            conversation.messages()[1].role(),
-            Role::User
-        );
+        assert_eq!(conversation.messages()[1].role(), Role::User);
 
-        assert_eq!(
-            conversation.messages()[1].content(),
-            "Hello"
-        );
+        assert_eq!(conversation.messages()[1].content(), "Hello");
 
-        assert_eq!(
-            conversation.messages()[2].role(),
-            Role::Assistant
-        );
+        assert_eq!(conversation.messages()[2].role(), Role::Assistant);
 
-        assert_eq!(
-            conversation.messages()[3].role(),
-            Role::User
-        );
+        assert_eq!(conversation.messages()[3].role(), Role::User);
     }
 
     #[test]
     fn accepts_existing_message() {
         let mut conversation = Conversation::new();
 
-        conversation.push(
-            Message::user("Hello"),
-        );
+        conversation.push(Message::user("Hello"));
 
         assert_eq!(conversation.len(), 1);
-        assert_eq!(
-            conversation.messages()[0],
-            Message::user("Hello")
-        );
+        assert_eq!(conversation.messages()[0], Message::user("Hello"));
     }
 
     #[test]
     fn creates_from_existing_messages() {
-        let conversation =
-            Conversation::from_messages(vec![
-                Message::system("Be concise."),
-                Message::user("Hello"),
-            ]);
+        let conversation = Conversation::from_messages(vec![
+            Message::system("Be concise."),
+            Message::user("Hello"),
+        ]);
 
         assert_eq!(conversation.len(), 2);
-        assert_eq!(
-            conversation.messages()[0].role(),
-            Role::System
-        );
-        assert_eq!(
-            conversation.messages()[1].role(),
-            Role::User
-        );
+        assert_eq!(conversation.messages()[0].role(), Role::System);
+        assert_eq!(conversation.messages()[1].role(), Role::User);
     }
 
     #[test]
     fn clears_messages() {
-        let mut conversation =
-            Conversation::with_system("System");
+        let mut conversation = Conversation::with_system("System");
 
         conversation.push_user("Hello");
 

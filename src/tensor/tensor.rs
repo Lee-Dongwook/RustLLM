@@ -1,12 +1,12 @@
+use crate::error::{Result, TinyError};
 use crate::ops::{
     attention_scale_mask_f16_encode, attention_scale_mask_f32_encode, batched_matmul_f16_encode,
     batched_matmul_f32_encode, cast, materialize_contiguous_f16, materialize_contiguous_f16_encode,
     materialize_contiguous_f32, matmul_f16, matmul_f32, softmax_f16_encode, softmax_f32_encode,
 };
 use crate::tensor::{gqa_matmul, repeat_kv};
-use std::sync::Arc;
 use ::metal::CommandBufferRef;
-use crate::error::{Result, TinyError};
+use std::sync::Arc;
 
 use crate::metal::{MetalBuffer, MetalContext, MetalExecution};
 
@@ -110,20 +110,15 @@ impl Tensor {
 
         match self.dtype {
             DType::F16 => {
-                let buffer = 
-                    materialize_contiguous_f16_encode(
-                        context, 
-                        command_buffer, 
-                        self.metal_buffer()?, 
-                        self.shape.dims(), 
-                        self.strides.values(),
-                    )?;
-                
-                Tensor::from_metal_buffer(
-                    buffer, 
-                    self.shape.dims(), 
-                    DType::F16,
-                )
+                let buffer = materialize_contiguous_f16_encode(
+                    context,
+                    command_buffer,
+                    self.metal_buffer()?,
+                    self.shape.dims(),
+                    self.strides.values(),
+                )?;
+
+                Tensor::from_metal_buffer(buffer, self.shape.dims(), DType::F16)
             }
 
             DType::F32 => {

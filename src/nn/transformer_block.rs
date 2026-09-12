@@ -1,10 +1,10 @@
 use crate::error::{Result, TinyError};
 
 use crate::metal::{MetalContext, MetalExecution};
-use ::metal::CommandBufferRef;
 use crate::model::LayerKvCache;
 use crate::profile::DecodeProfile;
 use crate::tensor::{DType, Tensor};
+use ::metal::CommandBufferRef;
 use std::time::Instant;
 
 use super::{Mlp, RmsNorm, SelfAttention};
@@ -138,9 +138,12 @@ impl TransformerBlock {
             .attention_norm
             .forward_encode(context, command_buffer, x)?;
 
-        let attention =
-            self.attention
-                .forward_with_cache_encode(context, command_buffer, &normalized, cache)?;
+        let attention = self.attention.forward_with_cache_encode(
+            context,
+            command_buffer,
+            &normalized,
+            cache,
+        )?;
 
         let hidden = x.add_encode(context, command_buffer, &attention)?;
 
@@ -148,7 +151,9 @@ impl TransformerBlock {
             .mlp_norm
             .forward_encode(context, command_buffer, &hidden)?;
 
-        let mlp = self.mlp.forward_encode(context, command_buffer, &normalized)?;
+        let mlp = self
+            .mlp
+            .forward_encode(context, command_buffer, &normalized)?;
 
         hidden.add_encode(context, command_buffer, &mlp)
     }

@@ -33,7 +33,8 @@ impl LayerKvCache {
         {
             return Err(TinyError::ModelFormat(format!(
                 "KV cache write shape does not match this layer: cache has {} KV heads, input has {} heads",
-                self.num_kv_heads, key.dim(1)?,
+                self.num_kv_heads,
+                key.dim(1)?,
             )));
         }
         let seq = key.dim(2)?;
@@ -118,9 +119,9 @@ impl LayerKvCache {
         self.validate_append(&key, &value)?;
         let seq_len = key.dim(2)?;
         let start_pos = self.len;
-        let new_len = start_pos.checked_add(seq_len).ok_or_else(|| {
-            TinyError::InvalidShape("KV cache length overflow".into())
-        })?;
+        let new_len = start_pos
+            .checked_add(seq_len)
+            .ok_or_else(|| TinyError::InvalidShape("KV cache length overflow".into()))?;
 
         let key = key.contiguous_encode(context, command_buffer)?;
         let value = value.contiguous_encode(context, command_buffer)?;
@@ -250,7 +251,9 @@ mod tests {
                 .unwrap()
                 .to_f32_vec()
                 .unwrap(),
-            vec![1., 2., 3., 4., 9., 10., 11., 12., 5., 6., 7., 8., 13., 14., 15., 16.,],
+            vec![
+                1., 2., 3., 4., 9., 10., 11., 12., 5., 6., 7., 8., 13., 14., 15., 16.,
+            ],
         );
     }
 

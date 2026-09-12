@@ -6,7 +6,7 @@ use std::{
 use tiny_metal_llm::{
     benchmark::BenchmarkStats,
     error::{Result, TinyError},
-    generation::{generate_stream, generate_stream_profiled, GenerationConfig},
+    generation::{GenerationConfig, generate_stream, generate_stream_profiled},
     metal::MetalContext,
     model::Transformer,
     profile::DecodeProfile,

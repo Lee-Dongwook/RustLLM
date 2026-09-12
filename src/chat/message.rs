@@ -74,10 +74,7 @@ mod tests {
         let message = Message::system("You are a helpful assistant.");
 
         assert_eq!(message.role(), Role::System);
-        assert_eq!(
-            message.content(),
-            "You are a helpful assistant."
-        );
+        assert_eq!(message.content(), "You are a helpful assistant.");
     }
 
     #[test]

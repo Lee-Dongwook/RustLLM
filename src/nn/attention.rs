@@ -4,8 +4,8 @@ use crate::metal::{MetalContext, MetalExecution};
 use crate::model::LayerKvCache;
 use crate::profile::DecodeProfile;
 use crate::tensor::{DType, Tensor};
-use std::time::Instant;
 use ::metal::CommandBufferRef;
+use std::time::Instant;
 
 use super::{Linear, RotaryEmbedding};
 
@@ -199,8 +199,12 @@ impl SelfAttention {
         let k = self.prepare_heads(&k, seq_len, self.num_kv_heads)?;
         let v = self.prepare_heads(&v, seq_len, self.num_kv_heads)?;
 
-        let q = self.rope.forward_encode(context, command_buffer, &q, start_pos)?;
-        let k = self.rope.forward_encode(context, command_buffer, &k, start_pos)?;
+        let q = self
+            .rope
+            .forward_encode(context, command_buffer, &q, start_pos)?;
+        let k = self
+            .rope
+            .forward_encode(context, command_buffer, &k, start_pos)?;
 
         Ok((q, k, v))
     }
@@ -345,13 +349,13 @@ impl SelfAttention {
         let started = Instant::now();
         let execution = MetalExecution::new(context);
         let (q, k, v) = self.project_qkv_rope_encode(
-            context, 
-            execution.command_buffer(), 
+            context,
+            execution.command_buffer(),
             x,
             seq_len,
             start_pos,
         )?;
-        
+
         cache.append_encode(context, execution.command_buffer(), k, v)?;
         execution.finish();
         profile.qkv_projection += started.elapsed();
@@ -408,7 +412,7 @@ mod tests {
     use super::{Linear, RotaryEmbedding, SelfAttention};
     use crate::{
         error::TinyError,
-        metal::{MetalExecution, MetalContext},
+        metal::{MetalContext, MetalExecution},
         model::LayerKvCache,
         tensor::{DType, Tensor},
     };
@@ -619,8 +623,8 @@ mod tests {
             let cached: Vec<f32> = (0..num_kv_heads * (start_pos + seq_len) * head_dim)
                 .map(|index| (index as f32 % 3.0) - 1.0)
                 .collect();
-            let q =
-                Tensor::from_f32_slice(&context, &query, &[1, num_heads, seq_len, head_dim]).unwrap();
+            let q = Tensor::from_f32_slice(&context, &query, &[1, num_heads, seq_len, head_dim])
+                .unwrap();
             let key = Tensor::from_f32_slice(
                 &context,
                 &cached,
@@ -780,269 +784,127 @@ mod tests {
     }
 
     #[test]
-fn batched_qkv_projection_matches_sync_path() {
-    let Some(context) =
-        metal_context()
-    else {
-        return;
-    };
+    fn batched_qkv_projection_matches_sync_path() {
+        let Some(context) = metal_context() else {
+            return;
+        };
 
-    /*
-     * F16으로 테스트.
-     *
-     * Linear::forward_encode()의
-     * Dense F16 path도 검증할 수 있다.
-     */
-    let attention =
-        attention(&context)
-            .to_dtype(
-                &context,
-                DType::F16,
-            )
-            .unwrap();
+        /*
+         * F16으로 테스트.
+         *
+         * Linear::forward_encode()의
+         * Dense F16 path도 검증할 수 있다.
+         */
+        let attention = attention(&context).to_dtype(&context, DType::F16).unwrap();
 
-    let input =
-        Tensor::from_f32_slice(
+        let input = Tensor::from_f32_slice(
             &context,
-            &[
-                0.1,
-                0.2,
-                0.3,
-                0.4,
-                -0.2,
-                0.5,
-                0.7,
-                -0.1,
-            ],
+            &[0.1, 0.2, 0.3, 0.4, -0.2, 0.5, 0.7, -0.1],
             &[2, 4],
         )
         .unwrap()
-        .to_dtype(
-            &context,
-            DType::F16,
-        )
+        .to_dtype(&context, DType::F16)
         .unwrap();
 
-    /*
-     * 기존 synchronous reference
-     */
-    let expected_q =
-        attention
-            .q_proj
-            .forward(
-                &context,
-                &input,
-            )
+        /*
+         * 기존 synchronous reference
+         */
+        let expected_q = attention.q_proj.forward(&context, &input).unwrap();
+
+        let expected_k = attention.k_proj.forward(&context, &input).unwrap();
+
+        let expected_v = attention.v_proj.forward(&context, &input).unwrap();
+
+        /*
+         * batched path
+         */
+        let execution = MetalExecution::new(&context);
+
+        let (actual_q, actual_k, actual_v) = attention
+            .project_qkv_encode(&context, execution.command_buffer(), &input)
             .unwrap();
 
-    let expected_k =
-        attention
-            .k_proj
-            .forward(
-                &context,
-                &input,
-            )
-            .unwrap();
+        /*
+         * Q/K/V 세 개를 encode하고
+         * 여기서 단 한 번 commit/wait.
+         */
+        execution.finish();
 
-    let expected_v =
-        attention
-            .v_proj
-            .forward(
-                &context,
-                &input,
-            )
-            .unwrap();
+        assert_close(&expected_q, &actual_q, 0.01);
 
-    /*
-     * batched path
-     */
-    let execution =
-        MetalExecution::new(
+        assert_close(&expected_k, &actual_k, 0.01);
+
+        assert_close(&expected_v, &actual_v, 0.01);
+    }
+    #[test]
+    fn batched_qkv_rope_matches_sync_path() {
+        let Some(context) = metal_context() else {
+            return;
+        };
+
+        let attention = attention(&context).to_dtype(&context, DType::F16).unwrap();
+
+        let input = Tensor::from_f32_slice(
             &context,
-        );
-
-    let (actual_q, actual_k, actual_v) =
-        attention
-            .project_qkv_encode(
-                &context,
-                execution.command_buffer(),
-                &input,
-            )
-            .unwrap();
-
-    /*
-     * Q/K/V 세 개를 encode하고
-     * 여기서 단 한 번 commit/wait.
-     */
-    execution.finish();
-
-    assert_close(
-        &expected_q,
-        &actual_q,
-        0.01,
-    );
-
-    assert_close(
-        &expected_k,
-        &actual_k,
-        0.01,
-    );
-
-    assert_close(
-        &expected_v,
-        &actual_v,
-        0.01,
-    );
-}
-#[test]
-fn batched_qkv_rope_matches_sync_path() {
-    let Some(context) =
-        metal_context()
-    else {
-        return;
-    };
-
-    let attention =
-        attention(&context)
-            .to_dtype(
-                &context,
-                DType::F16,
-            )
-            .unwrap();
-
-    let input =
-        Tensor::from_f32_slice(
-            &context,
-            &[
-                0.1,
-                0.2,
-                0.3,
-                0.4,
-                -0.2,
-                0.5,
-                0.7,
-                -0.1,
-            ],
+            &[0.1, 0.2, 0.3, 0.4, -0.2, 0.5, 0.7, -0.1],
             &[2, 4],
         )
         .unwrap()
-        .to_dtype(
-            &context,
-            DType::F16,
-        )
+        .to_dtype(&context, DType::F16)
         .unwrap();
 
-    let seq_len = 2;
-    let start_pos = 0;
+        let seq_len = 2;
+        let start_pos = 0;
 
-    /*
-     * ---------------------------
-     * 기존 sync reference
-     * ---------------------------
-     */
+        /*
+         * ---------------------------
+         * 기존 sync reference
+         * ---------------------------
+         */
 
-    let expected_q =
-        attention
-            .q_proj
-            .forward(
-                &context,
-                &input,
-            )
+        let expected_q = attention.q_proj.forward(&context, &input).unwrap();
+
+        let expected_k = attention.k_proj.forward(&context, &input).unwrap();
+
+        let expected_v = attention.v_proj.forward(&context, &input).unwrap();
+
+        let expected_q = attention
+            .prepare_heads(&expected_q, seq_len, attention.num_heads)
             .unwrap();
 
-    let expected_k =
-        attention
-            .k_proj
-            .forward(
-                &context,
-                &input,
-            )
+        let expected_k = attention
+            .prepare_heads(&expected_k, seq_len, attention.num_kv_heads)
             .unwrap();
 
-    let expected_v =
-        attention
-            .v_proj
-            .forward(
-                &context,
-                &input,
-            )
+        let expected_v = attention
+            .prepare_heads(&expected_v, seq_len, attention.num_kv_heads)
             .unwrap();
 
-    let expected_q =
-        attention
-            .prepare_heads(
-                &expected_q,
-                seq_len,
-                attention.num_heads,
-            )
-            .unwrap();
-
-    let expected_k =
-        attention
-            .prepare_heads(
-                &expected_k,
-                seq_len,
-                attention.num_kv_heads,
-            )
-            .unwrap();
-
-    let expected_v =
-        attention
-            .prepare_heads(
-                &expected_v,
-                seq_len,
-                attention.num_kv_heads,
-            )
-            .unwrap();
-
-    let expected_q =
-        attention
+        let expected_q = attention
             .rope
-            .forward(
-                &context,
-                &expected_q,
-                start_pos,
-            )
+            .forward(&context, &expected_q, start_pos)
             .unwrap();
 
-    let expected_k =
-        attention
+        let expected_k = attention
             .rope
-            .forward(
-                &context,
-                &expected_k,
-                start_pos,
-            )
+            .forward(&context, &expected_k, start_pos)
             .unwrap();
 
-    /*
-     * V에는 RoPE가 없으므로,
-     * 비교할 때만 contiguous로 만들어준다.
-     */
-    let expected_v =
-        expected_v
-            .contiguous(
-                &context,
-            )
-            .unwrap();
+        /*
+         * V에는 RoPE가 없으므로,
+         * 비교할 때만 contiguous로 만들어준다.
+         */
+        let expected_v = expected_v.contiguous(&context).unwrap();
 
-    /*
-     * ---------------------------
-     * batched path
-     * ---------------------------
-     */
+        /*
+         * ---------------------------
+         * batched path
+         * ---------------------------
+         */
 
-    let execution =
-        MetalExecution::new(
-            &context,
-        );
+        let execution = MetalExecution::new(&context);
 
-    let (
-        actual_q,
-        actual_k,
-        actual_v,
-    ) =
-        attention
+        let (actual_q, actual_k, actual_v) = attention
             .project_qkv_rope_encode(
                 &context,
                 execution.command_buffer(),
@@ -1052,35 +914,18 @@ fn batched_qkv_rope_matches_sync_path() {
             )
             .unwrap();
 
-    execution.finish();
+        execution.finish();
 
-    /*
-     * V는 아직 view라서
-     * GPU execution 완료 후 비교용으로만 materialize.
-     */
-    let actual_v =
-        actual_v
-            .contiguous(
-                &context,
-            )
-            .unwrap();
+        /*
+         * V는 아직 view라서
+         * GPU execution 완료 후 비교용으로만 materialize.
+         */
+        let actual_v = actual_v.contiguous(&context).unwrap();
 
-    assert_close(
-        &expected_q,
-        &actual_q,
-        0.02,
-    );
+        assert_close(&expected_q, &actual_q, 0.02);
 
-    assert_close(
-        &expected_k,
-        &actual_k,
-        0.02,
-    );
+        assert_close(&expected_k, &actual_k, 0.02);
 
-    assert_close(
-        &expected_v,
-        &actual_v,
-        0.02,
-    );
-}
+        assert_close(&expected_v, &actual_v, 0.02);
+    }
 }

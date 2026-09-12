@@ -1,4 +1,5 @@
 pub mod benchmark;
+pub mod chat;
 pub mod error;
 pub mod generation;
 pub mod import;
@@ -9,4 +10,3 @@ pub mod ops;
 pub mod profile;
 pub mod tensor;
 pub mod tokenizer;
-pub mod chat;

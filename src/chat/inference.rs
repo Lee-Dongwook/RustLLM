@@ -1,13 +1,13 @@
 use crate::{
-    chat::conversation, error::{Result, TinyError}, generation::{
-        GenerationConfig, GenerationOutput, generate_stream,
-    }, metal::MetalContext, model::Transformer, tokenizer::Tokenizer,
+    chat::conversation,
+    error::{Result, TinyError},
+    generation::{GenerationConfig, GenerationOutput, generate_stream},
+    metal::MetalContext,
+    model::Transformer,
+    tokenizer::Tokenizer,
 };
 
-use super::{
-    ChatTemplate,
-    Conversation,
-};
+use super::{ChatTemplate, Conversation};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PreparedChatPrompt {
@@ -38,21 +38,17 @@ pub fn prepare_chat_prompt(
     template: &dyn ChatTemplate,
     conversation: &Conversation,
 ) -> Result<PreparedChatPrompt> {
-    let text = template.render(conversation, true,)?;
+    let text = template.render(conversation, true)?;
 
     let token_ids = tokenizer.encode(&text)?;
 
     if token_ids.is_empty() {
-        return Err(
-            TinyError::Tokenizer(
-                "chat prompt produced no tokens".to_string(),
-            ),
-        );
+        return Err(TinyError::Tokenizer(
+            "chat prompt produced no tokens".to_string(),
+        ));
     }
 
-    Ok(
-        PreparedChatPrompt { text, token_ids },
-    )
+    Ok(PreparedChatPrompt { text, token_ids })
 }
 
 pub fn generate_chat_stream<F>(
@@ -63,19 +59,16 @@ pub fn generate_chat_stream<F>(
     conversation: &Conversation,
     config: &GenerationConfig,
     on_token: F,
-) -> Result<GenerationOutput> where F: FnMut(u32) -> Result<()>, {
-    if tokenizer.vocab_size()
-        != model.config().vocab_size
-    {
-        return Err(
-            TinyError::Tokenizer(
-                format!(
-                    "tokenizer vocab size {} does not match model vocab size {}",
-                    tokenizer.vocab_size(),
-                    model.config().vocab_size,
-                ),
-            ),
-        );
+) -> Result<GenerationOutput>
+where
+    F: FnMut(u32) -> Result<()>,
+{
+    if tokenizer.vocab_size() != model.config().vocab_size {
+        return Err(TinyError::Tokenizer(format!(
+            "tokenizer vocab size {} does not match model vocab size {}",
+            tokenizer.vocab_size(),
+            model.config().vocab_size,
+        )));
     }
 
     let prompt = prepare_chat_prompt(tokenizer, template, conversation)?;
@@ -83,26 +76,33 @@ pub fn generate_chat_stream<F>(
     let max_seq_len = model.config().max_seq_len;
 
     if prompt.len() >= max_seq_len {
-        return Err(
-            TinyError::PositionOutOfRange { start_pos: 0, seq_len: prompt.len(), max_seq_len, },
-        );
+        return Err(TinyError::PositionOutOfRange {
+            start_pos: 0,
+            seq_len: prompt.len(),
+            max_seq_len,
+        });
     }
 
     let remaining_context = max_seq_len - prompt.len();
 
-    let generation_config = 
-        GenerationConfig{
-            max_new_tokens: 
-                config.max_new_tokens.min(remaining_context,),
-            temperature: config.temperature,
-            top_k: config.top_k,
-            top_p: config.top_p,
-            seed: config.seed,
-        };
-    
+    let generation_config = GenerationConfig {
+        max_new_tokens: config.max_new_tokens.min(remaining_context),
+        temperature: config.temperature,
+        top_k: config.top_k,
+        top_p: config.top_p,
+        seed: config.seed,
+    };
+
     generation_config.validate()?;
 
-    generate_stream(context, model, prompt.token_ids(), &generation_config, tokenizer.eos_token_id(), on_token,)
+    generate_stream(
+        context,
+        model,
+        prompt.token_ids(),
+        &generation_config,
+        tokenizer.eos_token_id(),
+        on_token,
+    )
 }
 
 #[cfg(test)]
@@ -112,31 +112,19 @@ mod tests {
     use super::prepare_chat_prompt;
 
     use crate::{
-        chat::{
-            templates::SmolLm2Template,
-            Conversation,
-        },
+        chat::{Conversation, templates::SmolLm2Template},
         error::Result,
         tokenizer::Tokenizer,
     };
 
     #[derive(Default)]
     struct RecordingTokenizer {
-        encoded_text:
-            RefCell<Option<String>>,
+        encoded_text: RefCell<Option<String>>,
     }
 
-    impl Tokenizer
-        for RecordingTokenizer
-    {
-        fn encode(
-            &self,
-            text: &str,
-        ) -> Result<Vec<u32>> {
-            *self
-                .encoded_text
-                .borrow_mut() =
-                Some(text.to_string());
+    impl Tokenizer for RecordingTokenizer {
+        fn encode(&self, text: &str) -> Result<Vec<u32>> {
+            *self.encoded_text.borrow_mut() = Some(text.to_string());
 
             /*
              * 여기서는 실제 tokenizer를
@@ -148,11 +136,7 @@ mod tests {
             Ok(vec![10, 20, 30])
         }
 
-        fn decode(
-            &self,
-            _token_ids: &[u32],
-            _skip_special_tokens: bool,
-        ) -> Result<String> {
+        fn decode(&self, _token_ids: &[u32], _skip_special_tokens: bool) -> Result<String> {
             Ok(String::new())
         }
 
@@ -160,43 +144,26 @@ mod tests {
             100
         }
 
-        fn bos_token_id(
-            &self,
-        ) -> Option<u32> {
+        fn bos_token_id(&self) -> Option<u32> {
             None
         }
 
-        fn eos_token_id(
-            &self,
-        ) -> Option<u32> {
+        fn eos_token_id(&self) -> Option<u32> {
             Some(99)
         }
     }
 
     #[test]
     fn prepares_chat_prompt_from_conversation() {
-        let tokenizer =
-            RecordingTokenizer::default();
+        let tokenizer = RecordingTokenizer::default();
 
-        let template =
-            SmolLm2Template::new();
+        let template = SmolLm2Template::new();
 
-        let mut conversation =
-            Conversation::with_system(
-                "Be concise.",
-            );
+        let mut conversation = Conversation::with_system("Be concise.");
 
-        conversation.push_user(
-            "Hello",
-        );
+        conversation.push_user("Hello");
 
-        let prepared =
-            prepare_chat_prompt(
-                &tokenizer,
-                &template,
-                &conversation,
-            )
-            .unwrap();
+        let prepared = prepare_chat_prompt(&tokenizer, &template, &conversation).unwrap();
 
         assert_eq!(
             prepared.text(),
@@ -211,54 +178,32 @@ mod tests {
             ),
         );
 
-        assert_eq!(
-            prepared.token_ids(),
-            &[10, 20, 30],
-        );
+        assert_eq!(prepared.token_ids(), &[10, 20, 30],);
 
         /*
          * ChatTemplate이 만든 바로 그 문자열이
          * tokenizer.encode()에 전달됐는지도 검증.
          */
         assert_eq!(
-            tokenizer
-                .encoded_text
-                .borrow()
-                .as_deref(),
+            tokenizer.encoded_text.borrow().as_deref(),
             Some(prepared.text()),
         );
     }
 
     #[test]
     fn prepared_prompt_reports_token_length() {
-        let tokenizer =
-            RecordingTokenizer::default();
+        let tokenizer = RecordingTokenizer::default();
 
-        let template =
-            SmolLm2Template::new();
+        let template = SmolLm2Template::new();
 
-        let mut conversation =
-            Conversation::new();
+        let mut conversation = Conversation::new();
 
-        conversation.push_user(
-            "Hello",
-        );
+        conversation.push_user("Hello");
 
-        let prepared =
-            prepare_chat_prompt(
-                &tokenizer,
-                &template,
-                &conversation,
-            )
-            .unwrap();
+        let prepared = prepare_chat_prompt(&tokenizer, &template, &conversation).unwrap();
 
-        assert_eq!(
-            prepared.len(),
-            3,
-        );
+        assert_eq!(prepared.len(), 3,);
 
-        assert!(
-            !prepared.is_empty(),
-        );
+        assert!(!prepared.is_empty(),);
     }
 }

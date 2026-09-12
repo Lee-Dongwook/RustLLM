@@ -14,13 +14,7 @@ pub fn kv_cache_write_f32(
 ) -> Result<()> {
     let execution = crate::metal::MetalExecution::new(context);
     let source = source.contiguous(context)?;
-    kv_cache_write_f32_encode(
-        context,
-        execution.command_buffer(),
-        cache,
-        &source,
-        start,
-    )?;
+    kv_cache_write_f32_encode(context, execution.command_buffer(), cache, &source, start)?;
     execution.finish();
     Ok(())
 }
@@ -51,13 +45,7 @@ pub fn kv_cache_write_f16(
 ) -> Result<()> {
     let execution = crate::metal::MetalExecution::new(context);
     let source = source.contiguous(context)?;
-    kv_cache_write_f16_encode(
-        context,
-        execution.command_buffer(),
-        cache,
-        &source,
-        start,
-    )?;
+    kv_cache_write_f16_encode(context, execution.command_buffer(), cache, &source, start)?;
     execution.finish();
     Ok(())
 }

@@ -1,7 +1,7 @@
 use std::ffi::c_void;
 use std::mem;
 
-use ::metal::{MTLSize, CommandBufferRef};
+use ::metal::{CommandBufferRef, MTLSize};
 
 use crate::error::{Result, TinyError};
 
@@ -51,7 +51,13 @@ pub fn materialize_contiguous_f16(
 ) -> Result<MetalBuffer> {
     let execution = MetalExecution::new(context);
 
-    let result = materialize_contiguous_f16_encode(context, execution.command_buffer(), source, dims, strides,)?;
+    let result = materialize_contiguous_f16_encode(
+        context,
+        execution.command_buffer(),
+        source,
+        dims,
+        strides,
+    )?;
 
     execution.finish();
 

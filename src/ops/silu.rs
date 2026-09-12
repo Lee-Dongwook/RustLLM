@@ -1,23 +1,27 @@
 use std::ffi::c_void;
 use std::mem;
 
-use ::metal::{CommandBufferRef,MTLSize};
+use ::metal::{CommandBufferRef, MTLSize};
 
 use crate::error::{Result, TinyError};
 
 use crate::metal::{MetalBuffer, MetalContext, MetalExecution};
 
-pub fn silu_f32(context: &MetalContext, input: &MetalBuffer,) -> Result<MetalBuffer> {
+pub fn silu_f32(context: &MetalContext, input: &MetalBuffer) -> Result<MetalBuffer> {
     let execution = MetalExecution::new(context);
 
-    let output = silu_f32_encode(context, execution.command_buffer(), input,)?;
+    let output = silu_f32_encode(context, execution.command_buffer(), input)?;
 
     execution.finish();
 
     Ok(output)
 }
 
-pub(crate) fn silu_f32_encode(context: &MetalContext, command_buffer: &CommandBufferRef, input: &MetalBuffer) -> Result<MetalBuffer> {
+pub(crate) fn silu_f32_encode(
+    context: &MetalContext,
+    command_buffer: &CommandBufferRef,
+    input: &MetalBuffer,
+) -> Result<MetalBuffer> {
     if input.is_empty() {
         return Err(TinyError::InvalidShape(
             "SiLU input cannot be empty".to_string(),
@@ -61,14 +65,18 @@ pub(crate) fn silu_f32_encode(context: &MetalContext, command_buffer: &CommandBu
 pub fn silu_f16(context: &MetalContext, input: &MetalBuffer) -> Result<MetalBuffer> {
     let execution = MetalExecution::new(context);
 
-    let output = silu_f16_encode(context, execution.command_buffer(), input,)?;
+    let output = silu_f16_encode(context, execution.command_buffer(), input)?;
 
     execution.finish();
 
     Ok(output)
 }
 
-pub(crate) fn silu_f16_encode(context: &MetalContext, command_buffer: &CommandBufferRef, input: &MetalBuffer) -> Result<MetalBuffer> {
+pub(crate) fn silu_f16_encode(
+    context: &MetalContext,
+    command_buffer: &CommandBufferRef,
+    input: &MetalBuffer,
+) -> Result<MetalBuffer> {
     if input.is_empty() {
         return Err(TinyError::InvalidShape(
             "SiLU input cannot be empty".to_string(),
@@ -105,94 +113,56 @@ mod tests {
     use super::silu_f16_encode;
 
     use crate::{
-        metal::{
-            MetalContext,
-            MetalExecution,
-        },
+        metal::{MetalContext, MetalExecution},
         ops::mul_f16_encode,
-        tensor::{
-            DType,
-            Tensor,
-        },
+        tensor::{DType, Tensor},
     };
 
     #[test]
     fn batches_silu_then_mul_in_one_command_buffer() {
-        let Ok(context) =
-            MetalContext::new()
-        else {
+        let Ok(context) = MetalContext::new() else {
             return;
         };
 
-        let gate =
-            Tensor::from_f16_slice(
-                &context,
-                &[
-                    half::f16::from_f32(1.0),
-                    half::f16::from_f32(-1.0),
-                ],
-                &[2],
-            )
-            .unwrap();
+        let gate = Tensor::from_f16_slice(
+            &context,
+            &[half::f16::from_f32(1.0), half::f16::from_f32(-1.0)],
+            &[2],
+        )
+        .unwrap();
 
-        let up =
-            Tensor::from_f16_slice(
-                &context,
-                &[
-                    half::f16::from_f32(2.0),
-                    half::f16::from_f32(3.0),
-                ],
-                &[2],
-            )
-            .unwrap();
+        let up = Tensor::from_f16_slice(
+            &context,
+            &[half::f16::from_f32(2.0), half::f16::from_f32(3.0)],
+            &[2],
+        )
+        .unwrap();
 
-        let execution =
-            MetalExecution::new(
-                &context,
-            );
+        let execution = MetalExecution::new(&context);
 
-        let activated =
-            silu_f16_encode(
-                &context,
-                execution.command_buffer(),
-                gate.metal_buffer().unwrap(),
-            )
-            .unwrap();
+        let activated = silu_f16_encode(
+            &context,
+            execution.command_buffer(),
+            gate.metal_buffer().unwrap(),
+        )
+        .unwrap();
 
-        let multiplied =
-            mul_f16_encode(
-                &context,
-                execution.command_buffer(),
-                &activated,
-                up.metal_buffer().unwrap(),
-            )
-            .unwrap();
+        let multiplied = mul_f16_encode(
+            &context,
+            execution.command_buffer(),
+            &activated,
+            up.metal_buffer().unwrap(),
+        )
+        .unwrap();
 
         execution.finish();
 
-        let result =
-            Tensor::from_metal_buffer(
-                multiplied,
-                &[2],
-                DType::F16,
-            )
-            .unwrap();
+        let result = Tensor::from_metal_buffer(multiplied, &[2], DType::F16).unwrap();
 
-        let values =
-            result
-                .to_f32_vec()
-                .unwrap();
+        let values = result.to_f32_vec().unwrap();
 
-        assert!(
-            (values[0] - 1.4621172)
-                .abs()
-                < 0.02
-        );
+        assert!((values[0] - 1.4621172).abs() < 0.02);
 
-        assert!(
-            (values[1] + 0.8068242)
-                .abs()
-                < 0.02
-        );
+        assert!((values[1] + 0.8068242).abs() < 0.02);
     }
 }

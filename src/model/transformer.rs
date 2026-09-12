@@ -641,7 +641,9 @@ mod tests {
             .unwrap();
 
         context.begin_decode_submission_profile();
-        model.forward_with_cache(&context, &[4], &mut cache).unwrap();
+        model
+            .forward_with_cache(&context, &[4], &mut cache)
+            .unwrap();
         let profile = context.take_decode_submission_profile().unwrap();
 
         assert_eq!(profile.command_buffers, 1);

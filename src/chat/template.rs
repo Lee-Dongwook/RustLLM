@@ -3,20 +3,13 @@ use crate::error::Result;
 use super::Conversation;
 
 pub trait ChatTemplate {
-    fn render(
-        &self,
-        conversation: &Conversation,
-        add_generation_prompt: bool,
-    ) -> Result<String>;
+    fn render(&self, conversation: &Conversation, add_generation_prompt: bool) -> Result<String>;
 }
 
 #[cfg(test)]
 mod tests {
     use super::ChatTemplate;
-    use crate::{
-        chat::Conversation,
-        error::Result,
-    };
+    use crate::{chat::Conversation, error::Result};
 
     struct TestTemplate;
 
@@ -45,47 +38,26 @@ mod tests {
 
     #[test]
     fn renders_conversation_through_template() {
-        let mut conversation =
-            Conversation::with_system("Be helpful.");
+        let mut conversation = Conversation::with_system("Be helpful.");
 
         conversation.push_user("Hello");
 
-        let rendered =
-            TestTemplate
-                .render(
-                    &conversation,
-                    true,
-                )
-                .unwrap();
+        let rendered = TestTemplate.render(&conversation, true).unwrap();
 
         assert_eq!(
             rendered,
-            concat!(
-                "system:Be helpful.\n",
-                "user:Hello\n",
-                "assistant:",
-            )
+            concat!("system:Be helpful.\n", "user:Hello\n", "assistant:",)
         );
     }
 
     #[test]
     fn can_render_without_generation_prompt() {
-        let mut conversation =
-            Conversation::new();
+        let mut conversation = Conversation::new();
 
         conversation.push_user("Hello");
 
-        let rendered =
-            TestTemplate
-                .render(
-                    &conversation,
-                    false,
-                )
-                .unwrap();
+        let rendered = TestTemplate.render(&conversation, false).unwrap();
 
-        assert_eq!(
-            rendered,
-            "user:Hello\n"
-        );
+        assert_eq!(rendered, "user:Hello\n");
     }
 }
