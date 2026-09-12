@@ -6,9 +6,9 @@ use crate::{
     generation::{GenerationConfig, GenerationOutput},
     metal::MetalContext,
     model::Transformer,
-    structured::{StructuredRetryConfig, generate_structured_with_retry},
+    structured::{StructuredRetryConfig, generate_structured_raw, parse_json},
     tokenizer::Tokenizer,
-    tools::{ToolCall, ToolRegistry},
+    tools::{Tool, ToolCall, ToolRegistry},
 };
 
 use super::{build_tool_arguments_task, build_tool_selection_prompt};
@@ -109,40 +109,17 @@ pub fn generate_tool_call(
         ))
     })?;
 
-    /*
-     * ------------------------------------
-     * Stage 2
-     * Tool Arguments
-     * ------------------------------------
-     */
-    let arguments_task = build_tool_arguments_task(user_request, tool)?;
-
-    /*
-     * 여기서는 Tool 자체의 schema를 바로 사용한다.
-     *
-     * calculator라면:
-     *
-     * {
-     *   "left": "number",
-     *   "operator": "string",
-     *   "right": "number"
-     * }
-     *
-     * Nested arguments object를 또 만들 필요가 없다.
-     */
-    let generated_arguments = generate_structured_with_retry::<Value>(
+    let (arguments, arguments_raw, arguments_generation) = generate_tool_arguments(
         context,
         model,
         tokenizer,
         template,
         conversation,
-        &arguments_task,
-        tool.input_schema(),
+        tool,
+        user_request,
         generation_config,
         retry_config,
     )?;
-
-    let (arguments, arguments_raw, arguments_generation) = generated_arguments.into_parts();
 
     /*
      * ------------------------------------
@@ -193,6 +170,79 @@ fn parse_tool_name(raw: &str) -> Result<String> {
     }
 
     Ok(raw.to_string())
+}
+
+fn generate_tool_arguments(
+    context: &MetalContext,
+    model: &Transformer,
+    tokenizer: &dyn Tokenizer,
+    template: &dyn ChatTemplate,
+    conversation: &Conversation,
+    tool: &dyn Tool,
+    user_request: &str,
+    generation_config: &GenerationConfig,
+    retry_config: &StructuredRetryConfig,
+) -> Result<(Value, String, GenerationOutput)> {
+    let mut task = build_tool_arguments_task(user_request, tool)?;
+
+    let attempts = retry_config.max_attempts();
+
+    let mut last_error = None;
+
+    for attempt in 0..attempts {
+        let raw = generate_structured_raw(
+            context,
+            model,
+            tokenizer,
+            template,
+            conversation,
+            &task,
+            tool.input_schema(),
+            generation_config,
+        )?;
+
+        let (raw_text, generation) = raw.into_parts();
+
+        let parsed = parse_json::<Value>(&raw_text);
+
+        match parsed {
+            Ok(value) => match tool.input_schema().coerce(&value) {
+                Ok(coerced) => {
+                    tool.input_schema().validate(&coerced)?;
+
+                    return Ok((coerced, raw_text, generation));
+                }
+
+                Err(error) => {
+                    last_error = Some(error.to_string());
+                }
+            },
+
+            Err(error) => {
+                last_error = Some(error.to_string());
+            }
+        }
+
+        if attempt + 1 < attempts {
+            task = format!(
+                "The previous tool arguments were invalid.\n\
+                     Correct them and return only the JSON arguments object.\n\n\
+                     User request:\n{user_request}\n\n\
+                     Tool:\n{}\n\n\
+                     Previous output:\n{raw_text}\n\n\
+                     Error:\n{}",
+                tool.name(),
+                last_error.as_deref().unwrap_or("unknown validation error"),
+            );
+        }
+    }
+
+    Err(TinyError::Tool(format!(
+        "failed to generate valid arguments for tool `{}` after {} attempts: {}",
+        tool.name(),
+        attempts,
+        last_error.unwrap_or_else(|| { "unknown error".to_string() }),
+    )))
 }
 
 #[cfg(test)]

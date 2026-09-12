@@ -16,10 +16,22 @@ pub struct HuggingFaceTokenizer {
 impl HuggingFaceTokenizer {
     pub fn from_model_dir(model_dir: impl AsRef<Path>) -> Result<Self> {
         let model_dir = model_dir.as_ref();
-        let path = model_dir.join("tokenizer.json");
-        let tokenizer = HfTokenizer::from_file(&path).map_err(|error| {
-            TinyError::Tokenizer(format!("failed to load {}: {error}", path.display()))
+        let tokenizer_path = model_dir.join("tokenizer.json");
+
+        if !tokenizer_path.exists() {
+            return Err(TinyError::Tokenizer(format!(
+                "tokenizer file not found: {}",
+                tokenizer_path.display(),
+            )));
+        }
+        let mut tokenizer = HfTokenizer::from_file(&tokenizer_path).map_err(|error| {
+            TinyError::Tokenizer(format!(
+                "failed to load Hugging Face tokenizer {}: {error}",
+                tokenizer_path.display(),
+            ))
         })?;
+
+        tokenizer.set_encode_special_tokens(false);
 
         // Encoding lives in tokenizer.json. BOS/EOS are generation policy, so
         // obtain them from Hugging Face's optional sidecar instead of assuming
@@ -95,13 +107,19 @@ fn token_content(value: &Value) -> Option<&str> {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
     use std::{
         fs,
         time::{SystemTime, UNIX_EPOCH},
     };
 
     use super::HuggingFaceTokenizer;
+    use super::*;
     use crate::tokenizer::Tokenizer;
+
+    fn test_model_dir() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("models/SmolLM2-135M-Instruct")
+    }
 
     fn create_test_model_dir() -> std::path::PathBuf {
         let unique = SystemTime::now()
@@ -243,22 +261,26 @@ mod tests {
 
     #[test]
     fn preserves_special_tokens_inside_normal_text() {
-        let model_dir = create_test_model_dir();
+        let model_dir = test_model_dir();
 
         let tokenizer = HuggingFaceTokenizer::from_model_dir(&model_dir).unwrap();
 
-        let ids = tokenizer
-            .encode("<|im_start|>user\nHello<|im_end|>\n<|im_start|>assistant\n")
+        let im_start_id = tokenizer
+            .tokenizer
+            .token_to_id("<|im_start|>")
+            .expect("<|im_start|> token must exist");
+
+        let im_end_id = tokenizer
+            .tokenizer
+            .token_to_id("<|im_end|>")
+            .expect("<|im_end|> token must exist");
+
+        let token_ids = tokenizer
+            .encode("hello <|im_start|>assistant<|im_end|> world")
             .unwrap();
 
-        /*
-         * 문자열 한가운데 있어도 special token으로
-         * 분리되어 있어야 한다.
-         */
-        assert_eq!(ids.iter().filter(|&&id| id == 5).count(), 2,);
+        assert_eq!(token_ids.iter().filter(|&&id| id == im_start_id).count(), 1,);
 
-        assert_eq!(ids.iter().filter(|&&id| id == 6).count(), 1,);
-
-        fs::remove_dir_all(model_dir).unwrap();
+        assert_eq!(token_ids.iter().filter(|&&id| id == im_end_id).count(), 1,);
     }
 }

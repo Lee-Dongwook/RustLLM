@@ -51,6 +51,10 @@ impl JsonSchema {
     pub fn validate(&self, value: &Value) -> Result<()> {
         validate_schema_value(&self.value, value, "$")
     }
+
+    pub fn coerce(&self, value: &Value) -> Result<Value> {
+        coerce_schema_value(&self.value, value, "$")
+    }
 }
 
 fn validate_schema_value(schema: &Value, value: &Value, path: &str) -> Result<()> {
@@ -150,6 +154,166 @@ fn json_type_name(value: &Value) -> &'static str {
         Value::String(_) => "string",
         Value::Array(_) => "array",
         Value::Object(_) => "object",
+    }
+}
+
+fn coerce_schema_value(schema: &Value, value: &Value, path: &str) -> Result<Value> {
+    match schema {
+        Value::String(expected_type) => coerce_primitive(expected_type, value, path),
+
+        Value::Object(schema_object) => {
+            let value_object = value.as_object().ok_or_else(|| {
+                TinyError::StructuredOutput(format!(
+                    "{path}: expected object, got {}",
+                    json_type_name(value),
+                ))
+            })?;
+
+            let mut result = serde_json::Map::new();
+
+            for (key, child_schema) in schema_object {
+                let child_value = value_object.get(key).ok_or_else(|| {
+                    TinyError::StructuredOutput(format!("{path}.{key}: required field is missing"))
+                })?;
+
+                let child_path = format!("{path}.{key}");
+
+                result.insert(
+                    key.clone(),
+                    coerce_schema_value(child_schema, child_value, &child_path)?,
+                );
+            }
+
+            /*
+             * Schema에 선언되지 않은 값은 그대로 보존.
+             *
+             * 나중에 strict additionalProperties 정책을
+             * 넣고 싶으면 별도로 처리하면 된다.
+             */
+            for (key, child_value) in value_object {
+                if !schema_object.contains_key(key) {
+                    result.insert(key.clone(), child_value.clone());
+                }
+            }
+
+            Ok(Value::Object(result))
+        }
+
+        Value::Array(schema_array) => {
+            if schema_array.len() != 1 {
+                return Err(TinyError::StructuredOutput(format!(
+                    "{path}: array schema must contain exactly one item descriptor"
+                )));
+            }
+
+            let values = value.as_array().ok_or_else(|| {
+                TinyError::StructuredOutput(format!(
+                    "{path}: expected array, got {}",
+                    json_type_name(value),
+                ))
+            })?;
+
+            let item_schema = &schema_array[0];
+
+            let mut result = Vec::with_capacity(values.len());
+
+            for (index, item) in values.iter().enumerate() {
+                result.push(coerce_schema_value(
+                    item_schema,
+                    item,
+                    &format!("{path}[{index}]"),
+                )?);
+            }
+
+            Ok(Value::Array(result))
+        }
+
+        _ => Ok(value.clone()),
+    }
+}
+
+fn coerce_primitive(expected_type: &str, value: &Value, path: &str) -> Result<Value> {
+    match expected_type {
+        "number" => {
+            if value.is_number() {
+                return Ok(value.clone());
+            }
+
+            if let Some(text) = value.as_str() {
+                if let Ok(number) = text.trim().parse::<f64>() {
+                    let number = serde_json::Number::from_f64(number).ok_or_else(|| {
+                        TinyError::StructuredOutput(format!("{path}: invalid number `{text}`"))
+                    })?;
+
+                    return Ok(Value::Number(number));
+                }
+            }
+
+            Err(TinyError::StructuredOutput(format!(
+                "{path}: cannot coerce {} to number",
+                json_type_name(value),
+            )))
+        }
+
+        "integer" => {
+            if value.as_i64().is_some() || value.as_u64().is_some() {
+                return Ok(value.clone());
+            }
+
+            if let Some(text) = value.as_str() {
+                let text = text.trim();
+
+                if let Ok(number) = text.parse::<i64>() {
+                    return Ok(Value::Number(number.into()));
+                }
+
+                if let Ok(number) = text.parse::<u64>() {
+                    return Ok(Value::Number(number.into()));
+                }
+            }
+
+            Err(TinyError::StructuredOutput(format!(
+                "{path}: cannot coerce {} to integer",
+                json_type_name(value),
+            )))
+        }
+
+        "boolean" => {
+            if value.is_boolean() {
+                return Ok(value.clone());
+            }
+
+            if let Some(text) = value.as_str() {
+                match text.trim().to_ascii_lowercase().as_str() {
+                    "true" => {
+                        return Ok(Value::Bool(true));
+                    }
+
+                    "false" => {
+                        return Ok(Value::Bool(false));
+                    }
+
+                    _ => {}
+                }
+            }
+
+            Err(TinyError::StructuredOutput(format!(
+                "{path}: cannot coerce {} to boolean",
+                json_type_name(value),
+            )))
+        }
+
+        /*
+         * string은 반대로 숫자를 문자열로
+         * 자동 변환하지 않는다.
+         *
+         * 너무 관대한 coercion을 피하기 위함.
+         */
+        "string" | "null" | "object" | "array" | "any" => Ok(value.clone()),
+
+        other => Err(TinyError::StructuredOutput(format!(
+            "{path}: unknown schema type `{other}`"
+        ))),
     }
 }
 
@@ -287,5 +451,34 @@ mod tests {
                 .to_string()
                 .contains("$.age: required field is missing")
         );
+    }
+
+    #[test]
+    fn coerces_numeric_strings() {
+        let schema = JsonSchema::new(
+            "calculator",
+            r#"{
+                "left": "number",
+                "operator": "string",
+                "right": "number"
+            }"#,
+        )
+        .unwrap();
+
+        let value = serde_json::json!({
+            "left": "123",
+            "operator": "multiply",
+            "right": "456"
+        });
+
+        let coerced = schema.coerce(&value).unwrap();
+
+        assert_eq!(coerced["left"], 123.0,);
+
+        assert_eq!(coerced["operator"], "multiply",);
+
+        assert_eq!(coerced["right"], 456.0,);
+
+        schema.validate(&coerced).unwrap();
     }
 }
