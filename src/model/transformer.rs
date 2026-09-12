@@ -382,9 +382,9 @@ fn take_linear(
             let expected_scale_shape = [shape[1]];
             if scale_weight.shape() != expected_scale_shape {
                 return Err(TinyError::InvalidShape(format!(
-                    "INT8 scale {scale_name} has shape {:?}, expected {:?}",
-                    scale_weight.shape(),
+                    "INT8 scale {scale_name} shape mismatch: expected {:?}, got {:?}",
                     expected_scale_shape,
+                    scale_weight.shape(),
                 )));
             }
             let (_, scale_data) = scale_weight.into_storage_parts();
