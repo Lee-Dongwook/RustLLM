@@ -4,27 +4,40 @@ use metal::MTLSize;
 
 use crate::{
     error::{Result, TinyError},
-    metal::MetalContext,
+    metal::{MetalContext, MetalExecution},
     tensor::{DType, Tensor},
 };
+use metal::CommandBufferRef;
 
 const SHADER_SOURCE: &str = include_str!("../../kernels/gqa_matmul.metal");
 const TILE_SIZE: u64 = 16;
 
 /// Computes `Q × Kᵀ` without materializing KV heads to query-head count.
 pub fn gqa_qk_matmul(context: &MetalContext, q: &Tensor, k: &Tensor) -> Result<Tensor> {
+    let execution = MetalExecution::new(context);
+    let output = gqa_qk_matmul_encode(context, execution.command_buffer(), q, k)?;
+    execution.finish();
+    Ok(output)
+}
+
+pub(crate) fn gqa_qk_matmul_encode(
+    context: &MetalContext,
+    command_buffer: &CommandBufferRef,
+    q: &Tensor,
+    k: &Tensor,
+) -> Result<Tensor> {
     let (batch, q_heads, q_len, kv_heads, kv_len, head_dim) = validate_qk(q, k)?;
     // A q_len=1 head permutation is layout-equivalent on device. Keep the
     // view to avoid a decode-only copy; prefill still materializes it.
     let q = if q_len == 1 {
         q.clone()
     } else {
-        contiguous(context, q)?
+        q.contiguous_encode(context, command_buffer)?
     };
     let k = if q_len == 1 {
         k.clone()
     } else {
-        contiguous(context, k)?
+        k.contiguous_encode(context, command_buffer)?
     };
     let output = Tensor::empty(context, &[batch, q_heads, q_len, kv_len], q.dtype())?;
     let kernel = match q.dtype() {
@@ -34,6 +47,7 @@ pub fn gqa_qk_matmul(context: &MetalContext, q: &Tensor, k: &Tensor) -> Result<T
 
     dispatch(
         context,
+        command_buffer,
         &q,
         &k,
         &output,
@@ -49,12 +63,24 @@ pub fn gqa_qk_matmul(context: &MetalContext, q: &Tensor, k: &Tensor) -> Result<T
 
 /// Computes `P × V` without materializing KV heads to query-head count.
 pub fn gqa_pv_matmul(context: &MetalContext, probs: &Tensor, value: &Tensor) -> Result<Tensor> {
+    let execution = MetalExecution::new(context);
+    let output = gqa_pv_matmul_encode(context, execution.command_buffer(), probs, value)?;
+    execution.finish();
+    Ok(output)
+}
+
+pub(crate) fn gqa_pv_matmul_encode(
+    context: &MetalContext,
+    command_buffer: &CommandBufferRef,
+    probs: &Tensor,
+    value: &Tensor,
+) -> Result<Tensor> {
     let (batch, q_heads, q_len, kv_heads, kv_len, head_dim) = validate_pv(probs, value)?;
-    let probs = contiguous(context, probs)?;
+    let probs = probs.contiguous_encode(context, command_buffer)?;
     let value = if q_len == 1 {
         value.clone()
     } else {
-        contiguous(context, value)?
+        value.contiguous_encode(context, command_buffer)?
     };
     let output = Tensor::empty(context, &[batch, q_heads, q_len, head_dim], probs.dtype())?;
     let kernel = match probs.dtype() {
@@ -64,6 +90,7 @@ pub fn gqa_pv_matmul(context: &MetalContext, probs: &Tensor, value: &Tensor) -> 
 
     dispatch(
         context,
+        command_buffer,
         &probs,
         &value,
         &output,
@@ -142,17 +169,10 @@ fn validate_head_groups(q_heads: usize, kv_heads: usize) -> Result<()> {
     Ok(())
 }
 
-fn contiguous(context: &MetalContext, tensor: &Tensor) -> Result<Tensor> {
-    if tensor.is_contiguous() {
-        Ok(tensor.clone())
-    } else {
-        tensor.contiguous(context)
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
 fn dispatch(
     context: &MetalContext,
+    command_buffer: &CommandBufferRef,
     left: &Tensor,
     right: &Tensor,
     output: &Tensor,
@@ -174,7 +194,6 @@ fn dispatch(
     .map_err(|_| TinyError::InvalidShape("GQA grid depth exceeds u64".to_string()))?;
 
     let pipeline = context.pipeline(SHADER_SOURCE, kernel_name);
-    let command_buffer = context.command_queue.new_command_buffer();
     let encoder = command_buffer.new_compute_command_encoder();
     encoder.set_compute_pipeline_state(pipeline.as_ref());
     encoder.set_buffer(0, Some(left.metal_buffer()?.raw()), 0);
@@ -207,7 +226,5 @@ fn dispatch(
         MTLSize::new(TILE_SIZE, TILE_SIZE, 1),
     );
     encoder.end_encoding();
-    command_buffer.commit();
-    command_buffer.wait_until_completed();
     Ok(())
 }

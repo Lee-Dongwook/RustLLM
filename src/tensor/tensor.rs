@@ -1,14 +1,14 @@
 use crate::ops::{
-    attention_scale_mask_f16, attention_scale_mask_f32, batched_matmul_f16, batched_matmul_f32,
-    cast, materialize_contiguous_f16, materialize_contiguous_f32, matmul_f16, matmul_f32,
-    softmax_f16, softmax_f32, materialize_contiguous_f16_encode,
+    attention_scale_mask_f16_encode, attention_scale_mask_f32_encode, batched_matmul_f16_encode,
+    batched_matmul_f32_encode, cast, materialize_contiguous_f16, materialize_contiguous_f16_encode,
+    materialize_contiguous_f32, matmul_f16, matmul_f32, softmax_f16_encode, softmax_f32_encode,
 };
 use crate::tensor::{gqa_matmul, repeat_kv};
 use std::sync::Arc;
 use ::metal::CommandBufferRef;
 use crate::error::{Result, TinyError};
 
-use crate::metal::{MetalBuffer, MetalContext};
+use crate::metal::{MetalBuffer, MetalContext, MetalExecution};
 
 use super::{DType, Device, Shape, Storage, Strides};
 
@@ -461,31 +461,60 @@ impl Tensor {
     }
 
     pub fn softmax_last_dim(&self, context: &MetalContext) -> Result<Self> {
+        let execution = MetalExecution::new(context);
+
+        let output = self.softmax_last_dim_encode(context, execution.command_buffer())?;
+
+        execution.finish();
+
+        Ok(output)
+    }
+
+    pub(crate) fn softmax_last_dim_encode(
+        &self,
+        context: &MetalContext,
+        command_buffer: &CommandBufferRef,
+    ) -> Result<Self> {
         if self.rank() == 0 {
             return Err(TinyError::InvalidDimension(
                 "Softmax requires at least one dimension".to_string(),
             ));
         }
 
-        let input = if self.is_contiguous() {
-            self.clone()
-        } else {
-            self.contiguous(context)?
-        };
+        let input = self.contiguous_encode(context, command_buffer)?;
 
         let width = input.dim(input.rank() - 1)?;
 
         let rows = input.numel() / width;
 
         let buffer = match self.dtype {
-            DType::F32 => softmax_f32(context, input.metal_buffer()?, rows, width)?,
-            DType::F16 => softmax_f16(context, input.metal_buffer()?, rows, width)?,
+            DType::F32 => {
+                softmax_f32_encode(context, command_buffer, input.metal_buffer()?, rows, width)?
+            }
+            DType::F16 => {
+                softmax_f16_encode(context, command_buffer, input.metal_buffer()?, rows, width)?
+            }
         };
 
         Self::from_metal_buffer(buffer, input.shape().dims(), self.dtype)
     }
 
     pub fn batched_matmul(&self, context: &MetalContext, rhs: &Tensor) -> Result<Self> {
+        let execution = MetalExecution::new(context);
+
+        let output = self.batched_matmul_encode(context, execution.command_buffer(), rhs)?;
+
+        execution.finish();
+
+        Ok(output)
+    }
+
+    pub(crate) fn batched_matmul_encode(
+        &self,
+        context: &MetalContext,
+        command_buffer: &CommandBufferRef,
+        rhs: &Tensor,
+    ) -> Result<Self> {
         if self.dtype != rhs.dtype {
             return Err(TinyError::UnsupportedDType(format!(
                 "mixed batched matmul dtypes: {:?} and {:?}",
@@ -542,21 +571,14 @@ impl Tensor {
 
         let batch_count: usize = lhs_dims[..rank - 2].iter().product();
 
-        let lhs = if self.is_contiguous() {
-            self.clone()
-        } else {
-            self.contiguous(context)?
-        };
+        let lhs = self.contiguous_encode(context, command_buffer)?;
 
-        let rhs = if rhs.is_contiguous() {
-            rhs.clone()
-        } else {
-            rhs.contiguous(context)?
-        };
+        let rhs = rhs.contiguous_encode(context, command_buffer)?;
 
         let buffer = match self.dtype {
-            DType::F32 => batched_matmul_f32(
+            DType::F32 => batched_matmul_f32_encode(
                 context,
+                command_buffer,
                 lhs.metal_buffer()?,
                 rhs.metal_buffer()?,
                 batch_count,
@@ -564,8 +586,9 @@ impl Tensor {
                 k,
                 n,
             )?,
-            DType::F16 => batched_matmul_f16(
+            DType::F16 => batched_matmul_f16_encode(
                 context,
+                command_buffer,
                 lhs.metal_buffer()?,
                 rhs.metal_buffer()?,
                 batch_count,
@@ -589,6 +612,27 @@ impl Tensor {
         scale: f32,
         query_start_pos: usize,
     ) -> Result<Self> {
+        let execution = MetalExecution::new(context);
+
+        let output = self.attention_scale_mask_encode(
+            context,
+            execution.command_buffer(),
+            scale,
+            query_start_pos,
+        )?;
+
+        execution.finish();
+
+        Ok(output)
+    }
+
+    pub(crate) fn attention_scale_mask_encode(
+        &self,
+        context: &MetalContext,
+        command_buffer: &CommandBufferRef,
+        scale: f32,
+        query_start_pos: usize,
+    ) -> Result<Self> {
         if self.rank() < 2 {
             return Err(TinyError::InvalidDimension(format!(
                 "attention scores require rank >= 2, got rank {}",
@@ -602,23 +646,21 @@ impl Tensor {
 
         let key_len = self.dim(rank - 1)?;
 
-        let input = if self.is_contiguous() {
-            self.clone()
-        } else {
-            self.contiguous(context)?
-        };
+        let input = self.contiguous_encode(context, command_buffer)?;
 
         let buffer = match self.dtype {
-            DType::F32 => attention_scale_mask_f32(
+            DType::F32 => attention_scale_mask_f32_encode(
                 context,
+                command_buffer,
                 input.metal_buffer()?,
                 scale,
                 query_len,
                 key_len,
                 query_start_pos,
             )?,
-            DType::F16 => attention_scale_mask_f16(
+            DType::F16 => attention_scale_mask_f16_encode(
                 context,
+                command_buffer,
                 input.metal_buffer()?,
                 scale,
                 query_len,
@@ -654,8 +696,26 @@ impl Tensor {
         gqa_matmul::gqa_qk_matmul(context, self, key)
     }
 
+    pub(crate) fn gqa_qk_matmul_encode(
+        &self,
+        context: &MetalContext,
+        command_buffer: &CommandBufferRef,
+        key: &Tensor,
+    ) -> Result<Self> {
+        gqa_matmul::gqa_qk_matmul_encode(context, command_buffer, self, key)
+    }
+
     pub fn gqa_pv_matmul(&self, context: &MetalContext, value: &Tensor) -> Result<Self> {
         gqa_matmul::gqa_pv_matmul(context, self, value)
+    }
+
+    pub(crate) fn gqa_pv_matmul_encode(
+        &self,
+        context: &MetalContext,
+        command_buffer: &CommandBufferRef,
+        value: &Tensor,
+    ) -> Result<Self> {
+        gqa_matmul::gqa_pv_matmul_encode(context, command_buffer, self, value)
     }
 }
 
