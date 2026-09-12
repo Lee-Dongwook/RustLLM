@@ -3,7 +3,11 @@ use crate::error::Result;
 use super::JsonSchema;
 
 const JSON_INSTRUCTIONS: &str = "Return ONLY valid JSON.\n\
-Do not include markdown code fences or any additional text.";
+Do not include markdown code fences or any additional text.\n\
+The schema below is a TYPE SPECIFICATION, not literal output.\n\
+Words such as \"string\" and \"number\" describe required JSON types.\n\
+Replace every type descriptor with the actual value derived from the task.\n\
+Do NOT copy type descriptors as output values.";
 
 pub fn build_json_prompt(task: &str, schema: &JsonSchema) -> Result<String> {
     let task = task.trim();
@@ -19,7 +23,7 @@ pub fn build_json_prompt(task: &str, schema: &JsonSchema) -> Result<String> {
 
     prompt.push_str(JSON_INSTRUCTIONS);
 
-    prompt.push_str("\n\nRequired JSON structure:\n");
+    prompt.push_str("\n\nRequired JSON shape and types:\n");
 
     prompt.push_str(&schema);
 

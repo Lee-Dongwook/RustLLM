@@ -148,11 +148,35 @@ where
 
     let (raw_text, generation) = raw.into_parts();
 
-    let value = parse_json::<T>(&raw_text).map_err(|error| {
+    let value = parse_structured_value::<T>(&raw_text, schema).map_err(|error| {
         TinyError::StructuredOutput(format!("{error}; raw model output: {raw_text:?}"))
     })?;
 
     Ok(StructuredGeneration::new(value, raw_text, generation))
+}
+
+pub(crate) fn parse_structured_value<T>(raw_text: &str, schema: &JsonSchema) -> Result<T>
+where
+    T: DeserializeOwned,
+{
+    /*
+     * 1. JSON 문법 검증
+     */
+    let json_value = parse_json::<serde_json::Value>(raw_text)?;
+
+    /*
+     * 2. Dynamic schema 검증
+     */
+    schema.validate(&json_value)?;
+
+    /*
+     * 3. 최종 Rust 타입 검증
+     */
+    serde_json::from_value(json_value).map_err(|error| {
+        TinyError::StructuredOutput(format!(
+            "structured value does not match target Rust type: {error}"
+        ))
+    })
 }
 
 #[cfg(test)]

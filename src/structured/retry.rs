@@ -9,7 +9,9 @@ use crate::{
     tokenizer::Tokenizer,
 };
 
-use super::{JsonSchema, StructuredGeneration, generate_structured_raw, parse_json};
+use super::{JsonSchema, StructuredGeneration, generate_structured_raw};
+
+use super::generate::parse_structured_value;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StructuredRetryConfig {
@@ -40,8 +42,7 @@ impl Default for StructuredRetryConfig {
 
 fn build_repair_task(original_task: &str, previous_output: &str, parse_error: &str) -> String {
     format!(
-        "\
-The previous response did not satisfy the required JSON output contract.
+        r#"The previous response did not satisfy the required JSON output contract.
 
 Original task:
 {original_task}
@@ -52,10 +53,12 @@ Previous invalid response:
 Validation error:
 {parse_error}
 
-Correct the previous response.
+Correct the previous response so that every field matches the required type.
+Use actual values from the original task.
+Never use schema type words such as "string", "number", "boolean", "array", or "object" as placeholder values.
 Do not explain the error.
 Do not include markdown.
-Return only the corrected JSON object."
+Return only the corrected JSON object."#
     )
 }
 
@@ -89,7 +92,7 @@ where
 
         let (raw_text, generation) = raw.into_parts();
 
-        match parse_json::<T>(&raw_text) {
+        match parse_structured_value::<T>(&raw_text, schema) {
             Ok(value) => {
                 return Ok(StructuredGeneration::new(value, raw_text, generation));
             }
