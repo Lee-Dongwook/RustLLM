@@ -28,6 +28,8 @@ pub enum Command {
     Import(ImportArgs),
 
     Inspect(InspectArgs),
+
+    Structured(StructuredArgs),
 }
 
 #[derive(Debug, Args)]
@@ -111,6 +113,49 @@ pub struct ImportArgs {
 pub struct InspectArgs {
     #[arg(long, short = 'm')]
     pub model: PathBuf,
+}
+
+#[derive(Debug, Args)]
+pub struct StructuredArgs {
+    #[arg(long, short = 'm')]
+    pub model: PathBuf,
+
+    /// Task or instruction given to the model.
+    #[arg(long, short = 't')]
+    pub task: String,
+
+    /// Expected JSON structure.
+    ///
+    /// Example:
+    /// {"category":"string","priority":"string"}
+    #[arg(long, short = 's')]
+    pub schema: String,
+
+    /// Optional system prompt.
+    #[arg(long)]
+    pub system: Option<String>,
+
+    #[arg(long, value_enum, default_value_t = DTypeArg::F16)]
+    pub dtype: DTypeArg,
+
+    #[arg(long, default_value_t = 128)]
+    pub max_tokens: usize,
+
+    #[arg(long, default_value_t = 0.0)]
+    pub temperature: f32,
+
+    #[arg(long)]
+    pub top_k: Option<usize>,
+
+    #[arg(long, default_value_t = 1.0)]
+    pub top_p: f32,
+
+    #[arg(long, default_value_t = 42)]
+    pub seed: u64,
+
+    /// Total generation attempts, including the initial attempt.
+    #[arg(long, default_value_t = 3)]
+    pub attempts: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]

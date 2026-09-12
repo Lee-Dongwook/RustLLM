@@ -2,6 +2,7 @@ mod chat;
 mod import;
 mod inspect;
 mod run;
+mod structured;
 
 use tiny_metal_llm::error::Result;
 
@@ -12,6 +13,8 @@ pub fn execute(cli: Cli) -> Result<()> {
         Command::Run(args) => run::execute(args),
 
         Command::Chat(args) => chat::execute(args),
+
+        Command::Structured(args) => structured::execute(args),
 
         Command::Import(args) => import::execute(args),
 
