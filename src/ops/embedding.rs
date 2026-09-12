@@ -1,11 +1,11 @@
 use std::ffi::c_void;
 use std::mem;
 
-use ::metal::MTLSize;
+use ::metal::{CommandBufferRef, MTLSize};
 
 use crate::error::{Result, TinyError};
 
-use crate::metal::{MetalBuffer, MetalContext};
+use crate::metal::{MetalBuffer, MetalContext, MetalExecution};
 
 pub fn embedding_f32(
     context: &MetalContext,
@@ -14,80 +14,43 @@ pub fn embedding_f32(
     vocab_size: usize,
     hidden_size: usize,
 ) -> Result<MetalBuffer> {
-    if token_ids.is_empty() {
-        return Err(TinyError::InvalidShape(
-            "embedding requires at least one token".to_string(),
-        ));
-    }
+    let execution = MetalExecution::new(context);
 
-    if weight.len() != vocab_size * hidden_size {
-        return Err(TinyError::InvalidShape(format!(
-            "embedding weight has {} elements, expected {} for shape [{vocab_size}, {hidden_size}]",
-            weight.len(),
-            vocab_size * hidden_size,
-        )));
-    }
+    let output = embedding_f32_encode(
+        context,
+        execution.command_buffer(),
+        weight,
+        token_ids,
+        vocab_size,
+        hidden_size,
+    )?;
 
-    for &token_id in token_ids {
-        if token_id as usize >= vocab_size {
-            return Err(TinyError::InvalidTokenId {
-                token_id,
-                vocab_size,
-            });
-        }
-    }
+    execution.finish();
 
-    let token_buffer = MetalBuffer::from_u32_slice(context, token_ids);
+    Ok(output)
+}
 
-    let output_elements = token_ids.len() * hidden_size;
+pub(crate) fn embedding_f32_encode(
+    context: &MetalContext,
+    command_buffer: &CommandBufferRef,
+    weight: &MetalBuffer,
+    token_ids: &[u32],
+    vocab_size: usize,
+    hidden_size: usize,
+) -> Result<MetalBuffer> {
+    validate(weight, token_ids, vocab_size, hidden_size, 4)?;
 
-    let output = MetalBuffer::empty(context, output_elements);
+    let output = MetalBuffer::empty(context, token_ids.len() * hidden_size);
 
-    let shader_source = include_str!("../../kernels/embedding.metal");
-
-    let pipeline = context.pipeline(shader_source, "embedding_f32");
-
-    let command_buffer = context.command_queue.new_command_buffer();
-
-    let encoder = command_buffer.new_compute_command_encoder();
-
-    encoder.set_compute_pipeline_state(pipeline.as_ref());
-
-    encoder.set_buffer(0, Some(weight.raw()), 0);
-
-    encoder.set_buffer(1, Some(token_buffer.raw()), 0);
-
-    encoder.set_buffer(2, Some(output.raw()), 0);
-
-    let hidden_size = u32::try_from(hidden_size)
-        .map_err(|_| TinyError::InvalidShape("hidden size exceeds u32".to_string()))?;
-
-    let output_elements_u32 = u32::try_from(output_elements)
-        .map_err(|_| TinyError::InvalidShape("embedding output size exceeds u32".to_string()))?;
-
-    encoder.set_bytes(
-        3,
-        mem::size_of::<u32>() as u64,
-        &hidden_size as *const u32 as *const c_void,
-    );
-
-    encoder.set_bytes(
-        4,
-        mem::size_of::<u32>() as u64,
-        &output_elements_u32 as *const u32 as *const c_void,
-    );
-
-    let grid = MTLSize::new(output_elements as u64, 1, 1);
-
-    let threads_per_group = MTLSize::new(output_elements.min(256) as u64, 1, 1);
-
-    encoder.dispatch_threads(grid, threads_per_group);
-
-    encoder.end_encoding();
-
-    command_buffer.commit();
-
-    command_buffer.wait_until_completed();
+    encode(
+        context,
+        command_buffer,
+        "embedding_f32",
+        weight,
+        token_ids,
+        &output,
+        hidden_size,
+    )?;
 
     Ok(output)
 }
@@ -99,15 +62,64 @@ pub fn embedding_f16(
     vocab_size: usize,
     hidden_size: usize,
 ) -> Result<MetalBuffer> {
+    let execution = MetalExecution::new(context);
+
+    let output = embedding_f16_encode(
+        context,
+        execution.command_buffer(),
+        weight,
+        token_ids,
+        vocab_size,
+        hidden_size,
+    )?;
+
+    execution.finish();
+
+    Ok(output)
+}
+
+pub(crate) fn embedding_f16_encode(
+    context: &MetalContext,
+    command_buffer: &CommandBufferRef,
+    weight: &MetalBuffer,
+    token_ids: &[u32],
+    vocab_size: usize,
+    hidden_size: usize,
+) -> Result<MetalBuffer> {
+    validate(weight, token_ids, vocab_size, hidden_size, 2)?;
+
+    let output = MetalBuffer::empty_with_element_size(context, token_ids.len() * hidden_size, 2);
+
+    encode(
+        context,
+        command_buffer,
+        "embedding_f16",
+        weight,
+        token_ids,
+        &output,
+        hidden_size,
+    )?;
+
+    Ok(output)
+}
+
+fn validate(
+    weight: &MetalBuffer,
+    token_ids: &[u32],
+    vocab_size: usize,
+    hidden_size: usize,
+    element_size: usize,
+) -> Result<()> {
     if token_ids.is_empty() {
         return Err(TinyError::InvalidShape(
             "embedding requires at least one token".to_string(),
         ));
     }
 
-    if weight.len() != vocab_size * hidden_size || weight.byte_len() != weight.len() * 2 {
+    if weight.len() != vocab_size * hidden_size || weight.byte_len() != weight.len() * element_size
+    {
         return Err(TinyError::InvalidShape(format!(
-            "F16 embedding weight has {} elements ({} bytes), expected {} F16 elements for shape [{vocab_size}, {hidden_size}]",
+            "embedding weight has {} elements ({} bytes), expected {} elements of {element_size} bytes for shape [{vocab_size}, {hidden_size}]",
             weight.len(),
             weight.byte_len(),
             vocab_size * hidden_size,
@@ -123,40 +135,59 @@ pub fn embedding_f16(
         }
     }
 
+    Ok(())
+}
+
+fn encode(
+    context: &MetalContext,
+    command_buffer: &CommandBufferRef,
+    kernel_name: &str,
+    weight: &MetalBuffer,
+    token_ids: &[u32],
+    output: &MetalBuffer,
+    hidden_size: usize,
+) -> Result<()> {
+    // Metal command buffers retain the resources bound to their encoders, so
+    // this token buffer outlives the handle dropped at the end of this call.
     let token_buffer = MetalBuffer::from_u32_slice(context, token_ids);
+
     let output_elements = token_ids.len() * hidden_size;
-    let output = MetalBuffer::empty_with_element_size(context, output_elements, 2);
-    let pipeline = context.pipeline(
-        include_str!("../../kernels/embedding.metal"),
-        "embedding_f16",
-    );
-    let command_buffer = context.command_queue.new_command_buffer();
+
+    let shader_source = include_str!("../../kernels/embedding.metal");
+
+    let pipeline = context.pipeline(shader_source, kernel_name);
+
     let encoder = command_buffer.new_compute_command_encoder();
+
     encoder.set_compute_pipeline_state(pipeline.as_ref());
+
     encoder.set_buffer(0, Some(weight.raw()), 0);
+
     encoder.set_buffer(1, Some(token_buffer.raw()), 0);
+
     encoder.set_buffer(2, Some(output.raw()), 0);
 
-    let hidden_size = u32::try_from(hidden_size)
-        .map_err(|_| TinyError::InvalidShape("hidden size exceeds u32".to_string()))?;
-    let output_elements_u32 = u32::try_from(output_elements)
-        .map_err(|_| TinyError::InvalidShape("embedding output size exceeds u32".to_string()))?;
-    encoder.set_bytes(
-        3,
-        mem::size_of::<u32>() as u64,
-        &hidden_size as *const u32 as *const c_void,
-    );
-    encoder.set_bytes(
-        4,
-        mem::size_of::<u32>() as u64,
-        &output_elements_u32 as *const u32 as *const c_void,
-    );
+    let values = [hidden_size, output_elements].map(|value| {
+        u32::try_from(value)
+            .map_err(|_| TinyError::InvalidShape("embedding dimension exceeds u32".to_string()))
+    });
+
+    for (index, value) in values.into_iter().enumerate() {
+        let value = value?;
+
+        encoder.set_bytes(
+            (index + 3) as u64,
+            mem::size_of::<u32>() as u64,
+            &value as *const u32 as *const c_void,
+        );
+    }
+
     encoder.dispatch_threads(
         MTLSize::new(output_elements as u64, 1, 1),
         MTLSize::new(output_elements.min(256) as u64, 1, 1),
     );
+
     encoder.end_encoding();
-    command_buffer.commit();
-    command_buffer.wait_until_completed();
-    Ok(output)
+
+    Ok(())
 }

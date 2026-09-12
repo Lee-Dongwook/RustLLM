@@ -1,8 +1,10 @@
 use crate::error::{Result, TinyError};
 
-use crate::metal::MetalContext;
+use crate::metal::{MetalContext, MetalExecution};
 
-use crate::ops::{embedding_f16, embedding_f32};
+use crate::ops::{embedding_f16_encode, embedding_f32_encode};
+
+use metal::CommandBufferRef;
 
 use crate::tensor::{DType, Tensor};
 
@@ -59,22 +61,35 @@ impl Embedding {
     }
 
     pub fn forward(&self, context: &MetalContext, token_ids: &[u32]) -> Result<Tensor> {
-        let weight = if self.weight.is_contiguous() {
-            self.weight.clone()
-        } else {
-            self.weight.contiguous(context)?
-        };
+        let execution = MetalExecution::new(context);
+
+        let output = self.forward_encode(context, execution.command_buffer(), token_ids)?;
+
+        execution.finish();
+
+        Ok(output)
+    }
+
+    pub(crate) fn forward_encode(
+        &self,
+        context: &MetalContext,
+        command_buffer: &CommandBufferRef,
+        token_ids: &[u32],
+    ) -> Result<Tensor> {
+        let weight = self.weight.contiguous_encode(context, command_buffer)?;
 
         let output = match self.weight.dtype() {
-            DType::F32 => embedding_f32(
+            DType::F32 => embedding_f32_encode(
                 context,
+                command_buffer,
                 weight.metal_buffer()?,
                 token_ids,
                 self.vocab_size,
                 self.hidden_size,
             )?,
-            DType::F16 => embedding_f16(
+            DType::F16 => embedding_f16_encode(
                 context,
+                command_buffer,
                 weight.metal_buffer()?,
                 token_ids,
                 self.vocab_size,

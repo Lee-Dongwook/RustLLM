@@ -30,6 +30,7 @@ pub use concat_sequence::concat_sequence_f32;
 pub use contiguous::{materialize_contiguous_f16, materialize_contiguous_f32};
 pub(crate) use contiguous::{materialize_contiguous_f16_encode, materialize_contiguous_f32_encode};
 pub use embedding::{embedding_f16, embedding_f32};
+pub(crate) use embedding::{embedding_f16_encode, embedding_f32_encode};
 pub(crate) use kv_cache_write::{kv_cache_write_f16_encode, kv_cache_write_f32_encode};
 pub use kv_cache_write::{kv_cache_write_f16, kv_cache_write_f32};
 pub use matmul::matmul_f32;
