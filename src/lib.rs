@@ -9,3 +9,4 @@ pub mod ops;
 pub mod profile;
 pub mod tensor;
 pub mod tokenizer;
+pub mod chat;
