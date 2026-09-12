@@ -1,6 +1,6 @@
 use crate::{
     error::{Result, TinyError},
-    metal::MetalContext,
+    metal::{MetalContext, MetalExecution},
     profile::DecodeProfile,
     tensor::Tensor,
 };
@@ -48,7 +48,14 @@ impl Transformer {
             )));
         }
 
-        let mut hidden = self.token_embedding.forward(context, token_ids)?;
+        // Embedding, every block, the final norm and the LM head share one
+        // command buffer, so a decode step commits and waits exactly once.
+        let execution = MetalExecution::new(context);
+        let command_buffer = execution.command_buffer();
+
+        let mut hidden = self
+            .token_embedding
+            .forward_encode(context, command_buffer, token_ids)?;
         for (index, block) in self.blocks.iter().enumerate() {
             let layer_cache = cache.layer_mut(index)?;
             if layer_cache.len() + token_ids.len() > self.config.max_seq_len {
@@ -58,11 +65,17 @@ impl Transformer {
                     max_seq_len: self.config.max_seq_len,
                 });
             }
-            hidden = block.forward_with_cache(context, &hidden, layer_cache)?;
+            hidden = block.forward_with_cache_encode(context, command_buffer, &hidden, layer_cache)?;
         }
 
-        let hidden = self.final_norm.forward(context, &hidden)?;
-        self.lm_head.forward(context, &hidden)
+        let hidden = self
+            .final_norm
+            .forward_encode(context, command_buffer, &hidden)?;
+        let logits = self.lm_head.forward_encode(context, command_buffer, &hidden)?;
+
+        execution.finish();
+
+        Ok(logits)
     }
 
     /// Profiles one decode forward pass. Callers must only use this with one
@@ -77,17 +90,13 @@ impl Transformer {
         if token_ids.len() != 1 {
             return self.forward_with_cache(context, token_ids, cache);
         }
-        let mut hidden = self.token_embedding.forward(context, token_ids)?;
-        for (index, block) in self.blocks.iter().enumerate() {
-            let layer_cache = cache.layer_mut(index)?;
-            hidden = block.forward_with_cache_profiled(context, &hidden, layer_cache, profile)?;
-        }
+
+        // A decode step is a single command buffer now, so the per-stage CPU
+        // timings would only measure encoding. Profile the whole step instead
+        // and keep production on exactly the same path.
         let started = Instant::now();
-        let hidden = self.final_norm.forward(context, &hidden)?;
-        profile.final_norm += started.elapsed();
-        let started = Instant::now();
-        let logits = self.lm_head.forward(context, &hidden)?;
-        profile.lm_head += started.elapsed();
+        let logits = self.forward_with_cache(context, token_ids, cache)?;
+        profile.decode_step += started.elapsed();
         Ok(logits)
     }
 }

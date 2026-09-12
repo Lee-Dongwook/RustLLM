@@ -628,6 +628,28 @@ mod tests {
     }
 
     #[test]
+    fn decode_token_submits_one_command_buffer() {
+        let Some(context) = metal_context() else {
+            return;
+        };
+        let model = tiny_transformer(&context)
+            .to_dtype(&context, DType::F16)
+            .unwrap();
+        let mut cache = model.new_kv_cache(&context).unwrap();
+        model
+            .forward_with_cache(&context, &[1, 2, 3], &mut cache)
+            .unwrap();
+
+        context.begin_decode_submission_profile();
+        model.forward_with_cache(&context, &[4], &mut cache).unwrap();
+        let profile = context.take_decode_submission_profile().unwrap();
+
+        assert_eq!(profile.command_buffers, 1);
+        assert_eq!(profile.commits, 1);
+        assert_eq!(profile.waits, 1);
+    }
+
+    #[test]
     fn profiled_decode_matches_normal_decode() {
         let Some(context) = metal_context() else {
             return;

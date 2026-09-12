@@ -110,6 +110,10 @@ pub struct DecodeProfile {
     pub residual: Duration,
     pub final_norm: Duration,
     pub lm_head: Duration,
+    /// Whole-step decode time. A decode step is a single command buffer, so
+    /// the per-stage fields above only apply to paths that still submit
+    /// operation by operation.
+    pub decode_step: Duration,
     pub decode_wall_time: Duration,
     pub sampled_tokens: usize,
     pub metal: MetalDecodeProfile,
@@ -127,6 +131,7 @@ impl DecodeProfile {
             + self.residual
             + self.final_norm
             + self.lm_head
+            + self.decode_step
     }
 
     pub fn record_decode_wall_time(&mut self, elapsed: Duration) {
@@ -172,7 +177,11 @@ impl DecodeProfile {
             ("Residual", self.residual),
             ("Final norm", self.final_norm),
             ("LM head", self.lm_head),
+            ("Decode step", self.decode_step),
         ] {
+            if duration.is_zero() {
+                continue;
+            }
             eprintln!(
                 "{name:<20} {:>9.2} ms {:>6.1}% {:>8.2} ms/token",
                 duration.as_secs_f64() * 1_000.0,
