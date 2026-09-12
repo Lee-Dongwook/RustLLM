@@ -1,11 +1,13 @@
 use std::ffi::c_void;
 use std::mem;
 
-use ::metal::MTLSize;
+use ::metal::{CommandBufferRef, MTLSize};
 
 use crate::error::{Result, TinyError};
 
-use crate::metal::{MetalBuffer, MetalContext};
+use crate::metal::{MetalBuffer, MetalContext, MetalExecution};
+
+const TILE_SIZE: u64 = 16;
 
 pub fn batched_matmul_f32(
     context: &MetalContext,
@@ -16,106 +18,51 @@ pub fn batched_matmul_f32(
     k: usize,
     n: usize,
 ) -> Result<MetalBuffer> {
-    if batch_count == 0 {
-        return Err(TinyError::InvalidShape(
-            "batched matmul batch count cannot be zero".to_string(),
-        ));
-    }
+    let execution = MetalExecution::new(context);
 
-    let expected_a = batch_count * m * k;
+    let output = batched_matmul_f32_encode(
+        context,
+        execution.command_buffer(),
+        a,
+        b,
+        batch_count,
+        m,
+        k,
+        n,
+    )?;
 
-    let expected_b = batch_count * k * n;
+    execution.finish();
 
-    if a.len() != expected_a {
-        return Err(TinyError::InvalidShape(format!(
-            "batched matmul left buffer has {} elements, expected {}",
-            a.len(),
-            expected_a,
-        )));
-    }
+    Ok(output)
+}
 
-    if b.len() != expected_b {
-        return Err(TinyError::InvalidShape(format!(
-            "batched matmul right buffer has {} elements, expected {}",
-            b.len(),
-            expected_b,
-        )));
-    }
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn batched_matmul_f32_encode(
+    context: &MetalContext,
+    command_buffer: &CommandBufferRef,
+    a: &MetalBuffer,
+    b: &MetalBuffer,
+    batch_count: usize,
+    m: usize,
+    k: usize,
+    n: usize,
+) -> Result<MetalBuffer> {
+    validate_operands(a, b, batch_count, m, k, n, 4)?;
 
-    let output_len = batch_count * m * n;
+    let output = MetalBuffer::empty(context, batch_count * m * n);
 
-    let output = MetalBuffer::empty(context, output_len);
-
-    let shader_source = include_str!("../../kernels/batched_matmul.metal");
-
-    let pipeline = context.pipeline(shader_source, "batched_matmul_f32");
-
-    let command_buffer = context.command_queue.new_command_buffer();
-
-    let encoder = command_buffer.new_compute_command_encoder();
-
-    encoder.set_compute_pipeline_state(pipeline.as_ref());
-
-    encoder.set_buffer(0, Some(a.raw()), 0);
-
-    encoder.set_buffer(1, Some(b.raw()), 0);
-
-    encoder.set_buffer(2, Some(output.raw()), 0);
-
-    let batch_count_u32 = u32::try_from(batch_count).map_err(|_| {
-        TinyError::InvalidShape("batched matmul batch count exceeds u32".to_string())
-    })?;
-
-    let m_u32 = u32::try_from(m)
-        .map_err(|_| TinyError::InvalidShape("batched matmul M exceeds u32".to_string()))?;
-
-    let k_u32 = u32::try_from(k)
-        .map_err(|_| TinyError::InvalidShape("batched matmul K exceeds u32".to_string()))?;
-
-    let n_u32 = u32::try_from(n)
-        .map_err(|_| TinyError::InvalidShape("batched matmul N exceeds u32".to_string()))?;
-
-    encoder.set_bytes(
-        3,
-        mem::size_of::<u32>() as u64,
-        &batch_count_u32 as *const u32 as *const c_void,
-    );
-
-    encoder.set_bytes(
-        4,
-        mem::size_of::<u32>() as u64,
-        &m_u32 as *const u32 as *const c_void,
-    );
-
-    encoder.set_bytes(
-        5,
-        mem::size_of::<u32>() as u64,
-        &k_u32 as *const u32 as *const c_void,
-    );
-
-    encoder.set_bytes(
-        6,
-        mem::size_of::<u32>() as u64,
-        &n_u32 as *const u32 as *const c_void,
-    );
-
-    const TILE_SIZE: u64 = 16;
-
-    let threads_per_group = MTLSize::new(TILE_SIZE, TILE_SIZE, 1);
-
-    let groups_x = (n as u64).div_ceil(TILE_SIZE);
-
-    let groups_y = (m as u64).div_ceil(TILE_SIZE);
-
-    let thread_groups = MTLSize::new(groups_x, groups_y, batch_count as u64);
-
-    encoder.dispatch_thread_groups(thread_groups, threads_per_group);
-
-    encoder.end_encoding();
-
-    command_buffer.commit();
-
-    command_buffer.wait_until_completed();
+    encode(
+        context,
+        command_buffer,
+        "batched_matmul_f32",
+        a,
+        b,
+        &output,
+        batch_count,
+        m,
+        k,
+        n,
+    )?;
 
     Ok(output)
 }
@@ -134,6 +81,65 @@ pub fn batched_matmul_f16(
     k: usize,
     n: usize,
 ) -> Result<MetalBuffer> {
+    let execution = MetalExecution::new(context);
+
+    let output = batched_matmul_f16_encode(
+        context,
+        execution.command_buffer(),
+        a,
+        b,
+        batch_count,
+        m,
+        k,
+        n,
+    )?;
+
+    execution.finish();
+
+    Ok(output)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn batched_matmul_f16_encode(
+    context: &MetalContext,
+    command_buffer: &CommandBufferRef,
+    a: &MetalBuffer,
+    b: &MetalBuffer,
+    batch_count: usize,
+    m: usize,
+    k: usize,
+    n: usize,
+) -> Result<MetalBuffer> {
+    validate_operands(a, b, batch_count, m, k, n, 2)?;
+
+    let output = MetalBuffer::empty_with_element_size(context, batch_count * m * n, 2);
+
+    encode(
+        context,
+        command_buffer,
+        "batched_matmul_f16",
+        a,
+        b,
+        &output,
+        batch_count,
+        m,
+        k,
+        n,
+    )?;
+
+    Ok(output)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn validate_operands(
+    a: &MetalBuffer,
+    b: &MetalBuffer,
+    batch_count: usize,
+    m: usize,
+    k: usize,
+    n: usize,
+    element_size: usize,
+) -> Result<()> {
     if batch_count == 0 {
         return Err(TinyError::InvalidShape(
             "batched matmul batch count cannot be zero".to_string(),
@@ -141,67 +147,80 @@ pub fn batched_matmul_f16(
     }
 
     let expected_a = batch_count * m * k;
+
     let expected_b = batch_count * k * n;
 
-    if a.len() != expected_a || a.byte_len() != expected_a * 2 {
+    if a.len() != expected_a || a.byte_len() != expected_a * element_size {
         return Err(TinyError::InvalidShape(format!(
-            "F16 batched matmul left buffer has {} elements ({} bytes), expected {} F16 elements",
+            "batched matmul left buffer has {} elements ({} bytes), expected {expected_a} elements of {element_size} bytes",
             a.len(),
             a.byte_len(),
-            expected_a,
         )));
     }
 
-    if b.len() != expected_b || b.byte_len() != expected_b * 2 {
+    if b.len() != expected_b || b.byte_len() != expected_b * element_size {
         return Err(TinyError::InvalidShape(format!(
-            "F16 batched matmul right buffer has {} elements ({} bytes), expected {} F16 elements",
+            "batched matmul right buffer has {} elements ({} bytes), expected {expected_b} elements of {element_size} bytes",
             b.len(),
             b.byte_len(),
-            expected_b,
         )));
     }
 
-    let output_len = batch_count * m * n;
-    let output = MetalBuffer::empty_with_element_size(context, output_len, 2);
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn encode(
+    context: &MetalContext,
+    command_buffer: &CommandBufferRef,
+    kernel_name: &str,
+    a: &MetalBuffer,
+    b: &MetalBuffer,
+    output: &MetalBuffer,
+    batch_count: usize,
+    m: usize,
+    k: usize,
+    n: usize,
+) -> Result<()> {
     let shader_source = include_str!("../../kernels/batched_matmul.metal");
-    let pipeline = context.pipeline(shader_source, "batched_matmul_f16");
-    let command_buffer = context.command_queue.new_command_buffer();
+
+    let pipeline = context.pipeline(shader_source, kernel_name);
+
     let encoder = command_buffer.new_compute_command_encoder();
 
     encoder.set_compute_pipeline_state(pipeline.as_ref());
+
     encoder.set_buffer(0, Some(a.raw()), 0);
+
     encoder.set_buffer(1, Some(b.raw()), 0);
+
     encoder.set_buffer(2, Some(output.raw()), 0);
 
-    let batch_count_u32 = u32::try_from(batch_count).map_err(|_| {
-        TinyError::InvalidShape("batched matmul batch count exceeds u32".to_string())
-    })?;
-    let m_u32 = u32::try_from(m)
-        .map_err(|_| TinyError::InvalidShape("batched matmul M exceeds u32".to_string()))?;
-    let k_u32 = u32::try_from(k)
-        .map_err(|_| TinyError::InvalidShape("batched matmul K exceeds u32".to_string()))?;
-    let n_u32 = u32::try_from(n)
-        .map_err(|_| TinyError::InvalidShape("batched matmul N exceeds u32".to_string()))?;
+    let dimensions = [batch_count, m, k, n].map(|value| {
+        u32::try_from(value)
+            .map_err(|_| TinyError::InvalidShape("batched matmul dimension exceeds u32".to_string()))
+    });
 
-    for (index, value) in [batch_count_u32, m_u32, k_u32, n_u32].iter().enumerate() {
+    for (index, value) in dimensions.into_iter().enumerate() {
+        let value = value?;
+
         encoder.set_bytes(
             (index + 3) as u64,
             mem::size_of::<u32>() as u64,
-            value as *const u32 as *const c_void,
+            &value as *const u32 as *const c_void,
         );
     }
 
-    const TILE_SIZE: u64 = 16;
-    let threads_per_group = MTLSize::new(TILE_SIZE, TILE_SIZE, 1);
-    let thread_groups = MTLSize::new(
-        (n as u64).div_ceil(TILE_SIZE),
-        (m as u64).div_ceil(TILE_SIZE),
-        batch_count as u64,
+    encoder.dispatch_thread_groups(
+        MTLSize::new(
+            (n as u64).div_ceil(TILE_SIZE),
+            (m as u64).div_ceil(TILE_SIZE),
+            batch_count as u64,
+        ),
+        MTLSize::new(TILE_SIZE, TILE_SIZE, 1),
     );
-    encoder.dispatch_thread_groups(thread_groups, threads_per_group);
-    encoder.end_encoding();
-    command_buffer.commit();
-    command_buffer.wait_until_completed();
 
-    Ok(output)
+    encoder.end_encoding();
+
+    Ok(())
 }

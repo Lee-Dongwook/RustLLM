@@ -20,7 +20,11 @@ mod swiglu;
 pub use add::{add_f16, add_f32};
 pub(crate) use add::{add_f16_encode, add_f32_encode};
 pub use attention_scale_mask::{attention_scale_mask_f16, attention_scale_mask_f32};
+pub(crate) use attention_scale_mask::{
+    attention_scale_mask_f16_encode, attention_scale_mask_f32_encode,
+};
 pub use batched_matmul::{batched_matmul_f16, batched_matmul_f32};
+pub(crate) use batched_matmul::{batched_matmul_f16_encode, batched_matmul_f32_encode};
 pub use cast::cast;
 pub use concat_sequence::concat_sequence_f32;
 pub use contiguous::{materialize_contiguous_f16, materialize_contiguous_f32};
@@ -44,4 +48,5 @@ pub use rope::{rope, rope_f32};
 pub use silu::{silu_f16, silu_f32};
 pub(crate) use silu::{silu_f16_encode, silu_f32_encode};
 pub use softmax::{softmax_f16, softmax_f32};
+pub(crate) use softmax::{softmax_f16_encode, softmax_f32_encode};
 pub(crate) use swiglu::swiglu_f16_encode;
