@@ -6,7 +6,6 @@ use crate::profile::DecodeProfile;
 use crate::tensor::{DType, Tensor};
 use std::time::Instant;
 use ::metal::CommandBufferRef;
-use rand::seq;
 
 use super::{Linear, RotaryEmbedding};
 
@@ -206,6 +205,43 @@ impl SelfAttention {
         Ok((q, k, v))
     }
 
+    /// Encodes QK -> scale/mask -> softmax -> PV into a single command buffer.
+    ///
+    /// `key` and `value` are the full cached prefix; `q` covers the new
+    /// positions starting at `start_pos`.
+    fn attention_core_encode(
+        &self,
+        context: &MetalContext,
+        command_buffer: &CommandBufferRef,
+        q: &Tensor,
+        key: &Tensor,
+        value: &Tensor,
+        start_pos: usize,
+    ) -> Result<Tensor> {
+        let is_gqa = self.num_heads != self.num_kv_heads;
+
+        let scores = if is_gqa {
+            q.gqa_qk_matmul_encode(context, command_buffer, key)?
+        } else {
+            q.batched_matmul_encode(context, command_buffer, &key.transpose(2, 3)?)?
+        };
+
+        let scores = scores.attention_scale_mask_encode(
+            context,
+            command_buffer,
+            1.0f32 / (self.head_dim as f32).sqrt(),
+            start_pos,
+        )?;
+
+        let probabilities = scores.softmax_last_dim_encode(context, command_buffer)?;
+
+        if is_gqa {
+            probabilities.gqa_pv_matmul_encode(context, command_buffer, value)
+        } else {
+            probabilities.batched_matmul_encode(context, command_buffer, value)
+        }
+    }
+
     pub fn forward_with_cache(
         &self,
         context: &MetalContext,
@@ -256,25 +292,17 @@ impl SelfAttention {
         let all_k = cache.key()?;
         let all_v = cache.value()?;
 
-        let is_gqa = self.num_heads != self.num_kv_heads;
-        let scores = if is_gqa {
-            q.gqa_qk_matmul(context, &all_k)?
-        } else {
-            let k_transposed = all_k.transpose(2, 3)?;
-            q.batched_matmul(context, &k_transposed)?
-        };
+        let execution = MetalExecution::new(context);
+        let attention = self.attention_core_encode(
+            context,
+            execution.command_buffer(),
+            &q,
+            &all_k,
+            &all_v,
+            start_pos,
+        )?;
+        execution.finish();
 
-        let scale = 1.0f32 / (self.head_dim as f32).sqrt();
-
-        let scores = scores.attention_scale_mask(context, scale, start_pos)?;
-
-        let probabilities = scores.softmax_last_dim(context)?;
-
-        let attention = if is_gqa {
-            probabilities.gqa_pv_matmul(context, &all_v)?
-        } else {
-            probabilities.batched_matmul(context, &all_v)?
-        };
         let attention = attention.permute(&[0, 2, 1, 3])?.contiguous(context)?;
 
         let attention = attention.reshape(&[seq_len, self.hidden_size])?;
@@ -313,22 +341,16 @@ impl SelfAttention {
         let started = Instant::now();
         let all_k = cache.key()?;
         let all_v = cache.value()?;
-        let scores = if self.num_heads != self.num_kv_heads {
-            q.gqa_qk_matmul(context, &all_k)?
-        } else {
-            q.batched_matmul(context, &all_k.transpose(2, 3)?)?
-        };
-        let scores = scores.attention_scale_mask(
+        let execution = MetalExecution::new(context);
+        let attention = self.attention_core_encode(
             context,
-            1.0f32 / (self.head_dim as f32).sqrt(),
+            execution.command_buffer(),
+            &q,
+            &all_k,
+            &all_v,
             start_pos,
         )?;
-        let probabilities = scores.softmax_last_dim(context)?;
-        let attention = if self.num_heads != self.num_kv_heads {
-            probabilities.gqa_pv_matmul(context, &all_v)?
-        } else {
-            probabilities.batched_matmul(context, &all_v)?
-        };
+        execution.finish();
         let attention = attention.permute(&[0, 2, 1, 3])?.contiguous(context)?;
         let attention = attention.reshape(&[seq_len, self.hidden_size])?;
         profile.attention += started.elapsed();
@@ -508,6 +530,86 @@ mod tests {
 
         assert_eq!(cache.key().unwrap().shape().dims(), &[1, 1, 2, 4]);
         assert_eq!(output.shape().dims(), &[2, 12]);
+    }
+
+    #[test]
+    fn batched_attention_core_matches_op_by_op_submission() {
+        let Some(context) = metal_context() else {
+            return;
+        };
+
+        for (num_heads, num_kv_heads) in [(2, 2), (3, 1)] {
+            let head_dim = 4;
+            let hidden = num_heads * head_dim;
+            let kv_hidden = num_kv_heads * head_dim;
+            let weight = |rows: usize, columns: usize| {
+                let values: Vec<f32> = (0..rows * columns)
+                    .map(|index| ((index % 7) as f32 - 3.0) / 10.0)
+                    .collect();
+                Linear::new(Tensor::from_f32_slice(&context, &values, &[rows, columns]).unwrap())
+                    .unwrap()
+            };
+            let attention = SelfAttention::new(
+                weight(hidden, hidden),
+                weight(hidden, kv_hidden),
+                weight(hidden, kv_hidden),
+                weight(hidden, hidden),
+                RotaryEmbedding::new(&context, head_dim, 8, 10_000.0).unwrap(),
+                num_heads,
+                num_kv_heads,
+            )
+            .unwrap();
+
+            let seq_len = 3;
+            let start_pos = 2;
+            let query: Vec<f32> = (0..num_heads * seq_len * head_dim)
+                .map(|index| (index as f32 % 5.0) - 2.0)
+                .collect();
+            let cached: Vec<f32> = (0..num_kv_heads * (start_pos + seq_len) * head_dim)
+                .map(|index| (index as f32 % 3.0) - 1.0)
+                .collect();
+            let q =
+                Tensor::from_f32_slice(&context, &query, &[1, num_heads, seq_len, head_dim]).unwrap();
+            let key = Tensor::from_f32_slice(
+                &context,
+                &cached,
+                &[1, num_kv_heads, start_pos + seq_len, head_dim],
+            )
+            .unwrap();
+            let value = key.clone();
+
+            let is_gqa = num_heads != num_kv_heads;
+            let scores = if is_gqa {
+                q.gqa_qk_matmul(&context, &key).unwrap()
+            } else {
+                q.batched_matmul(&context, &key.transpose(2, 3).unwrap())
+                    .unwrap()
+            };
+            let scores = scores
+                .attention_scale_mask(&context, 1.0 / (head_dim as f32).sqrt(), start_pos)
+                .unwrap();
+            let probabilities = scores.softmax_last_dim(&context).unwrap();
+            let expected = if is_gqa {
+                probabilities.gqa_pv_matmul(&context, &value).unwrap()
+            } else {
+                probabilities.batched_matmul(&context, &value).unwrap()
+            };
+
+            let execution = MetalExecution::new(&context);
+            let actual = attention
+                .attention_core_encode(
+                    &context,
+                    execution.command_buffer(),
+                    &q,
+                    &key,
+                    &value,
+                    start_pos,
+                )
+                .unwrap();
+            execution.finish();
+
+            assert_close(&expected, &actual, 1e-5);
+        }
     }
 
     #[test]
