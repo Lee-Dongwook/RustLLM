@@ -1,5 +1,4 @@
 use crate::{
-    chat::conversation,
     error::{Result, TinyError},
     generation::{GenerationConfig, GenerationOutput, generate_stream},
     metal::MetalContext,

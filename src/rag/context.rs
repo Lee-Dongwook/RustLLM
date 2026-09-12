@@ -60,13 +60,29 @@ mod tests {
 
         let prompt = build_rag_prompt("How does Rust manage memory?", &retrieved).unwrap();
 
-        assert!(prompt.contains("[Source: rust.md, chunk 0]"));
+        assert!(prompt.contains("Context:"));
 
         assert!(prompt.contains("Rust uses ownership to manage memory."));
 
+        assert!(prompt.contains("Cargo is Rust's package manager."));
+
         assert!(prompt.contains("How does Rust manage memory?"));
 
-        assert!(prompt.contains("Do not invent facts"));
+        assert!(prompt.contains("Answer:"));
+    }
+
+    #[test]
+    fn does_not_include_source_metadata_in_model_prompt() {
+        let retrieved = vec![RetrievedChunk::new(
+            DocumentChunk::new(0, "rust.md", 0, 37, "Rust uses ownership to manage memory."),
+            1.42,
+        )];
+
+        let prompt = build_rag_prompt("How does Rust manage memory?", &retrieved).unwrap();
+
+        assert!(!prompt.contains("[Source:"));
+
+        assert!(!prompt.contains("rust.md"));
     }
 
     #[test]

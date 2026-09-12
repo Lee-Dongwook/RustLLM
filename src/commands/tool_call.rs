@@ -86,7 +86,7 @@ pub fn execute(args: ToolCallArgs) -> Result<()> {
         &retry_config,
     )?;
 
-    let call = generated.value();
+    let call = generated.call();
 
     eprintln!();
     eprintln!("tool call:");

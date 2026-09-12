@@ -1,17 +1,50 @@
+use serde_json::Value;
+
 use crate::{
-    chat::{ChatTemplate, Conversation},
-    error::Result,
-    generation::GenerationConfig,
+    chat::{ChatTemplate, Conversation, generate_chat_stream},
+    error::{Result, TinyError},
+    generation::{GenerationConfig, GenerationOutput},
     metal::MetalContext,
     model::Transformer,
-    structured::{
-        JsonSchema, StructuredGeneration, StructuredRetryConfig, generate_structured_with_retry,
-    },
+    structured::{StructuredRetryConfig, generate_structured_with_retry},
     tokenizer::Tokenizer,
     tools::{ToolCall, ToolRegistry},
 };
 
-use super::build_tool_call_task;
+use super::{build_tool_arguments_task, build_tool_selection_prompt};
+
+#[derive(Debug)]
+pub struct GeneratedToolCall {
+    call: ToolCall,
+
+    selection_raw: String,
+    arguments_raw: String,
+
+    selection_generation: GenerationOutput,
+    arguments_generation: GenerationOutput,
+}
+
+impl GeneratedToolCall {
+    pub fn call(&self) -> &ToolCall {
+        &self.call
+    }
+
+    pub fn selection_raw(&self) -> &str {
+        &self.selection_raw
+    }
+
+    pub fn arguments_raw(&self) -> &str {
+        &self.arguments_raw
+    }
+
+    pub fn selection_generation(&self) -> &GenerationOutput {
+        &self.selection_generation
+    }
+
+    pub fn arguments_generation(&self) -> &GenerationOutput {
+        &self.arguments_generation
+    }
+}
 
 pub fn generate_tool_call(
     context: &MetalContext,
@@ -23,52 +56,166 @@ pub fn generate_tool_call(
     user_request: &str,
     generation_config: &GenerationConfig,
     retry_config: &StructuredRetryConfig,
-) -> Result<StructuredGeneration<ToolCall>> {
+) -> Result<GeneratedToolCall> {
     /*
-     * 등록된 Tool들의 description/schema를
-     * LLM task prompt로 변환.
+     * ------------------------------------
+     * Stage 1
+     * Tool Selection
+     * ------------------------------------
      */
-    let task = build_tool_call_task(user_request, registry)?;
+    let selection_prompt = build_tool_selection_prompt(user_request, registry)?;
+
+    let mut selection_conversation = conversation.clone();
+
+    selection_conversation.push_user(selection_prompt);
 
     /*
-     * ToolCall 자체의 공통 envelope.
-     *
-     * 실제 arguments schema는 선택된 tool에 따라
-     * 달라지므로 generation 후 Registry에서 한 번 더 검증한다.
+     * Tool 이름만 필요하므로 길게 생성할 이유가 없다.
      */
-    let call_schema = JsonSchema::new(
-        "tool_call",
-        r#"{
-                "name": "string",
-                "arguments": "object"
-            }"#,
+    let selection_config = GenerationConfig {
+        max_new_tokens: 16,
+        temperature: 0.0,
+        top_k: None,
+        top_p: 1.0,
+        seed: generation_config.seed,
+    };
+
+    let mut selection_tokens = Vec::new();
+
+    let selection_generation = generate_chat_stream(
+        context,
+        model,
+        tokenizer,
+        template,
+        &selection_conversation,
+        &selection_config,
+        |token_id| {
+            selection_tokens.push(token_id);
+
+            Ok(())
+        },
     )?;
 
-    let output = generate_structured_with_retry::<ToolCall>(
+    let selection_raw = tokenizer
+        .decode(&selection_tokens, true)?
+        .trim()
+        .to_string();
+
+    let tool_name = parse_tool_name(&selection_raw)?;
+
+    let tool = registry.get(&tool_name).ok_or_else(|| {
+        TinyError::Tool(format!(
+            "model selected unknown tool `{tool_name}`; raw output: {selection_raw:?}"
+        ))
+    })?;
+
+    /*
+     * ------------------------------------
+     * Stage 2
+     * Tool Arguments
+     * ------------------------------------
+     */
+    let arguments_task = build_tool_arguments_task(user_request, tool)?;
+
+    /*
+     * 여기서는 Tool 자체의 schema를 바로 사용한다.
+     *
+     * calculator라면:
+     *
+     * {
+     *   "left": "number",
+     *   "operator": "string",
+     *   "right": "number"
+     * }
+     *
+     * Nested arguments object를 또 만들 필요가 없다.
+     */
+    let generated_arguments = generate_structured_with_retry::<Value>(
         context,
         model,
         tokenizer,
         template,
         conversation,
-        &task,
-        &call_schema,
+        &arguments_task,
+        tool.input_schema(),
         generation_config,
         retry_config,
     )?;
 
-    /*
-     * 여기까지 성공했다고 끝이 아님.
-     *
-     * {
-     *   "name": "fake_tool",
-     *   "arguments": {}
-     * }
-     *
-     * 역시 outer schema 자체는 만족하니까.
-     *
-     * 실제 registry를 기준으로 semantic validation.
-     */
-    registry.validate_call(output.value())?;
+    let (arguments, arguments_raw, arguments_generation) = generated_arguments.into_parts();
 
-    Ok(output)
+    /*
+     * ------------------------------------
+     * Stage 3
+     * Assemble ToolCall
+     * ------------------------------------
+     */
+    let call = ToolCall::new(tool_name, arguments);
+
+    /*
+     * 최종 semantic validation.
+     */
+    registry.validate_call(&call)?;
+
+    Ok(GeneratedToolCall {
+        call,
+        selection_raw,
+        arguments_raw,
+        selection_generation,
+        arguments_generation,
+    })
+}
+
+fn parse_tool_name(raw: &str) -> Result<String> {
+    let raw = raw.trim();
+
+    if raw.is_empty() {
+        return Err(TinyError::Tool(
+            "model produced an empty tool selection".to_string(),
+        ));
+    }
+
+    /*
+     * 모델이:
+     *
+     * calculator
+     *
+     * 또는:
+     *
+     * "calculator"
+     *
+     * 둘 중 어느 형태를 내더라도 허용한다.
+     */
+    if raw.starts_with('"') && raw.ends_with('"') {
+        return serde_json::from_str::<String>(raw).map_err(|error| {
+            TinyError::Tool(format!("failed to parse tool name {raw:?}: {error}"))
+        });
+    }
+
+    Ok(raw.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_tool_name;
+
+    #[test]
+    fn parses_plain_tool_name() {
+        assert_eq!(parse_tool_name("calculator").unwrap(), "calculator",);
+    }
+
+    #[test]
+    fn parses_json_string_tool_name() {
+        assert_eq!(parse_tool_name("\"calculator\"").unwrap(), "calculator",);
+    }
+
+    #[test]
+    fn trims_tool_name() {
+        assert_eq!(parse_tool_name("  calculator  ").unwrap(), "calculator",);
+    }
+
+    #[test]
+    fn rejects_empty_tool_name() {
+        assert!(parse_tool_name("   ").is_err());
+    }
 }
