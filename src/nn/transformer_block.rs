@@ -1,6 +1,7 @@
 use crate::error::{Result, TinyError};
 
 use crate::metal::{MetalContext, MetalExecution};
+use ::metal::CommandBufferRef;
 use crate::model::LayerKvCache;
 use crate::profile::DecodeProfile;
 use crate::tensor::{DType, Tensor};
@@ -112,34 +113,44 @@ impl TransformerBlock {
         x: &Tensor,
         cache: &mut LayerKvCache,
     ) -> Result<Tensor> {
+        let execution = MetalExecution::new(context);
+
+        let output =
+            self.forward_with_cache_encode(context, execution.command_buffer(), x, cache)?;
+
+        execution.finish();
+
+        Ok(output)
+    }
+
+    /// Encodes norm, attention, both residuals and the SwiGLU tail into
+    /// `command_buffer`, so a whole block costs one submission.
+    pub(crate) fn forward_with_cache_encode(
+        &self,
+        context: &MetalContext,
+        command_buffer: &CommandBufferRef,
+        x: &Tensor,
+        cache: &mut LayerKvCache,
+    ) -> Result<Tensor> {
         self.validate_input_dtype(x)?;
 
-        let normalized = self.attention_norm.forward(context, x)?;
+        let normalized = self
+            .attention_norm
+            .forward_encode(context, command_buffer, x)?;
 
-        let attention = self
-            .attention
-            .forward_with_cache(context, &normalized, cache)?;
+        let attention =
+            self.attention
+                .forward_with_cache_encode(context, command_buffer, &normalized, cache)?;
 
-        let hidden = x.add(context, &attention)?;
+        let hidden = x.add_encode(context, command_buffer, &attention)?;
 
-        // Decode keeps the complete F16/INT8 SwiGLU tail and its residual in
-        // one command buffer. F32 retains the established synchronous path.
-        if x.dim(0)? == 1 && (self.mlp.is_quantized() || self.dtype() == DType::F16) {
-            let execution = MetalExecution::new(context);
-            let normalized =
-                self.mlp_norm
-                    .forward_encode(context, execution.command_buffer(), &hidden)?;
-            let mlp = self
-                .mlp
-                .forward_encode(context, execution.command_buffer(), &normalized)?;
-            let output = hidden.add_encode(context, execution.command_buffer(), &mlp)?;
-            execution.finish();
-            Ok(output)
-        } else {
-            let normalized = self.mlp_norm.forward(context, &hidden)?;
-            let mlp = self.mlp.forward(context, &normalized)?;
-            hidden.add(context, &mlp)
-        }
+        let normalized = self
+            .mlp_norm
+            .forward_encode(context, command_buffer, &hidden)?;
+
+        let mlp = self.mlp.forward_encode(context, command_buffer, &normalized)?;
+
+        hidden.add_encode(context, command_buffer, &mlp)
     }
 
     /// Decode-only profiled variant. The normal inference method above remains
@@ -154,9 +165,9 @@ impl TransformerBlock {
         self.validate_input_dtype(x)?;
 
         // Keep profiling on the same decode execution path as production. The
-        // per-stage CPU timings are no longer meaningful once several kernels
-        // share a command buffer, so account for this block as attention time.
-        if x.dim(0)? == 1 && (self.mlp.is_quantized() || self.dtype() == DType::F16) {
+        // per-stage CPU timings are no longer meaningful once a whole block
+        // shares one command buffer, so account for it as attention time.
+        if x.dim(0)? == 1 {
             let started = Instant::now();
             let output = self.forward_with_cache(context, x, cache)?;
             profile.attention += started.elapsed();
@@ -264,6 +275,33 @@ mod tests {
         .unwrap();
 
         TransformerBlock::new(attention_norm, attention, mlp_norm, mlp).unwrap()
+    }
+
+    #[test]
+    fn decode_step_submits_one_command_buffer_per_block() {
+        let Some(context) = metal_context() else {
+            return;
+        };
+        let block = block(&context).to_dtype(&context, DType::F16).unwrap();
+        let mut cache = LayerKvCache::new(&context, 2, 8, 2, DType::F16).unwrap();
+        let token = Tensor::from_f32_slice(&context, &[0.1, 0.2, 0.3, 0.4], &[1, 4])
+            .unwrap()
+            .to_dtype(&context, DType::F16)
+            .unwrap();
+
+        block
+            .forward_with_cache(&context, &token, &mut cache)
+            .unwrap();
+
+        context.begin_decode_submission_profile();
+        block
+            .forward_with_cache(&context, &token, &mut cache)
+            .unwrap();
+        let profile = context.take_decode_submission_profile().unwrap();
+
+        assert_eq!(profile.command_buffers, 1);
+        assert_eq!(profile.commits, 1);
+        assert_eq!(profile.waits, 1);
     }
 
     fn assert_close(expected: &Tensor, actual: &Tensor, tolerance: f32) {

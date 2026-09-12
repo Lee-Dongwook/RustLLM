@@ -57,12 +57,6 @@ impl Mlp {
         self.gate_proj.dtype()
     }
 
-    pub(crate) fn is_quantized(&self) -> bool {
-        self.gate_proj.is_quantized()
-            && self.up_proj.is_quantized()
-            && self.down_proj.is_quantized()
-    }
-
     pub fn to_dtype(&self, context: &MetalContext, dtype: DType) -> Result<Self> {
         Ok(Self {
             gate_proj: self.gate_proj.to_dtype(context, dtype)?,
